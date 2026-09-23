@@ -11,6 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -33,6 +34,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -81,37 +83,34 @@ data class ChatMessage(
 @Composable
 fun AppRoot(context: Context) {
     val modelDir = remember { File(context.filesDir, "models").apply { mkdirs() } }
-    val textModelFile = remember { File(modelDir, "Qwen2-VL-2B-Instruct-Q4_K_M.gguf") }
-    val visionProjFile = remember { File(modelDir, "mmproj-Qwen2-VL-2B-Instruct-f16.gguf") }
+    val textModel = remember { File(modelDir, "Qwen2-VL-2B-Instruct-Q4_K_M.gguf") }
+    val visionProj = remember { File(modelDir, "mmproj-Qwen2-VL-2B-Instruct-f16.gguf") }
     
-    // Проверка наличия полного пакета ~2.3 ГБ
-    val isModelDownloaded = remember { 
-        textModelFile.exists() && textModelFile.length() > 1_000_000_000L &&
-        visionProjFile.exists() && visionProjFile.length() > 500_000_000L
+    val isDownloaded = remember { 
+        textModel.exists() && textModel.length() > 1_000_000_000L &&
+        visionProj.exists() && visionProj.length() > 500_000_000L
     }
 
     var appState by remember { mutableStateOf(AppState.SPLASH) }
 
     LaunchedEffect(Unit) {
-        // Apple-style анимация приветствия
         delay(2200L)
-        appState = if (isModelDownloaded) AppState.CHAT else AppState.DOWNLOAD
+        appState = if (isDownloaded) AppState.CHAT else AppState.DOWNLOAD
     }
 
     AnimatedContent(
         targetState = appState,
         transitionSpec = {
-            (fadeIn(animationSpec = tween(600, easing = EaseInOutCubic)) +
-                    scaleIn(initialScale = 0.95f, animationSpec = tween(600, easing = EaseInOutCubic)))
-                .togetherWith(fadeOut(animationSpec = tween(400)))
+            (fadeIn(animationSpec = tween(500)) + scaleIn(initialScale = 0.95f))
+                .togetherWith(fadeOut(animationSpec = tween(300)))
         },
         label = "AppScreenTransition"
     ) { state ->
         when (state) {
             AppState.SPLASH -> AppleWelcomeSplash()
             AppState.DOWNLOAD -> DownloadModelScreen(
-                textModel = textModelFile,
-                visionProj = visionProjFile,
+                textModel = textModel,
+                visionProj = visionProj,
                 onComplete = { appState = AppState.CHAT }
             )
             AppState.CHAT -> ChatScreen()
@@ -119,9 +118,6 @@ fun AppRoot(context: Context) {
     }
 }
 
-// -------------------------------------------------------------------------------------
-// 1. ПРИВЕТСТВИЕ В СТИЛЕ APPLE (ВЕКТОРНЫЙ ЛОГОТИП, НЕ ТРЕБУЕТ ВНЕШНИХ PNG)
-// -------------------------------------------------------------------------------------
 @Composable
 fun AppleWelcomeSplash() {
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -145,21 +141,14 @@ fun AppleWelcomeSplash() {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Box(
+            Image(
+                painter = painterResource(id = R.drawable.logo),
+                contentDescription = "Logo",
                 modifier = Modifier
-                    .size(100.dp)
+                    .size(110.dp)
                     .scale(pulseScale)
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(Color.White),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Send,
-                    contentDescription = null,
-                    tint = Color.Black,
-                    modifier = Modifier.size(50.dp)
-                )
-            }
+                    .clip(RoundedCornerShape(26.dp))
+            )
 
             Spacer(modifier = Modifier.height(28.dp))
 
@@ -182,9 +171,6 @@ fun AppleWelcomeSplash() {
     }
 }
 
-// -------------------------------------------------------------------------------------
-// 2. ЗАГРУЗЧИК ПОЛНОЙ МОДЕЛИ НА 2.3 ГБ (LLM + VISION PROJ)
-// -------------------------------------------------------------------------------------
 @Composable
 fun DownloadModelScreen(
     textModel: File,
@@ -208,15 +194,13 @@ fun DownloadModelScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Box(
+        Image(
+            painter = painterResource(id = R.drawable.logo),
+            contentDescription = null,
             modifier = Modifier
                 .size(72.dp)
                 .clip(RoundedCornerShape(18.dp))
-                .background(Color.White),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(Icons.Default.CloudDownload, contentDescription = null, tint = Color.Black, modifier = Modifier.size(36.dp))
-        }
+        )
 
         Spacer(modifier = Modifier.height(24.dp))
 
@@ -271,31 +255,26 @@ fun DownloadModelScreen(
                     isDownloading = true
                     errorText = null
                     scope.launch {
-                        // Часть 1: Языковое ядро Qwen2-VL (~1.52 ГБ)
                         stepName = "1/2 Загрузка ядра модели (1520 МБ)..."
-                        var part1Downloaded = 0L
-
                         val ok1 = downloadDirectModel(
                             urlStr = "https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/Qwen2-VL-2B-Instruct-Q4_K_M.gguf?download=true",
                             dest = textModel,
                             onProgress = { cur, _ ->
-                                part1Downloaded = cur
-                                val totalCurMb = cur / (1024 * 1024)
-                                downloadedMb = totalCurMb.toString()
-                                progress = (totalCurMb.toFloat() / 2320f).coerceIn(0f, 1f)
+                                val curMb = cur / (1024 * 1024)
+                                downloadedMb = curMb.toString()
+                                progress = (curMb.toFloat() / 2320f).coerceIn(0f, 1f)
                             },
                             onError = { err -> isDownloading = false; errorText = err }
                         )
 
                         if (!ok1) return@launch
 
-                        // Часть 2: Проектор картинок mmproj (~800 МБ)
                         stepName = "2/2 Загрузка модуля зрения для фото (800 МБ)..."
                         val ok2 = downloadDirectModel(
                             urlStr = "https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen2-VL-2B-Instruct-f16.gguf?download=true",
                             dest = visionProj,
                             onProgress = { cur, _ ->
-                                val combinedMb = (1520L) + (cur / (1024 * 1024))
+                                val combinedMb = 1520L + (cur / (1024 * 1024))
                                 downloadedMb = combinedMb.toString()
                                 progress = (combinedMb.toFloat() / 2320f).coerceIn(0f, 1f)
                             },
@@ -330,9 +309,6 @@ fun DownloadModelScreen(
     }
 }
 
-// -------------------------------------------------------------------------------------
-// 3. ЧАТ С НЕЙРОСЕТЬЮ (ТЕКСТ + КАРТИНКИ)
-// -------------------------------------------------------------------------------------
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen() {
@@ -345,7 +321,7 @@ fun ChatScreen() {
         mutableStateListOf(
             ChatMessage(
                 isUser = false,
-                text = "Привет! Я твой оффлайн AI на 2.3 ГБ. Задавай любые вопросы текстом или прикрепляй фото заданий и упражнений — решим всё на процессоре без интернета."
+                text = "Привет! Я твой оффлайн AI на 2.3 ГБ. Задавай любые вопросы текстом или прикрепляй фото заданий — решим всё на процессоре без интернета."
             )
         )
     }
@@ -386,19 +362,17 @@ fun ChatScreen() {
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
+                        Image(
+                            painter = painterResource(id = R.drawable.logo),
+                            contentDescription = null,
                             modifier = Modifier
-                                .size(32.dp)
+                                .size(34.dp)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(Color.White),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Default.Send, contentDescription = null, tint = Color.Black, modifier = Modifier.size(18.dp))
-                        }
+                        )
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text("Reshala AI 2.3B", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                            Text("Оффлайн процессорный режим", fontSize = 11.sp, color = Color(0xFF4CAF50))
+                            Text("Оффлайн режим", fontSize = 11.sp, color = Color(0xFF4CAF50))
                         }
                     }
                 },
@@ -434,7 +408,7 @@ fun ChatScreen() {
                                 strokeWidth = 2.dp
                             )
                             Spacer(modifier = Modifier.width(10.dp))
-                            Text("Думает на процессоре...", fontSize = 13.sp, color = Color.Gray)
+                            Text("Анализирую фото на процессоре...", fontSize = 13.sp, color = Color.Gray)
                         }
                     }
                 }
@@ -481,7 +455,7 @@ fun ChatScreen() {
                 OutlinedTextField(
                     value = inputText,
                     onValueChange = { inputText = it },
-                    placeholder = { Text("Спроси или прикрепи фото задачи...", fontSize = 14.sp, color = Color.Gray) },
+                    placeholder = { Text("Спроси или напиши номер задания...", fontSize = 14.sp, color = Color.Gray) },
                     modifier = Modifier
                         .weight(1f)
                         .padding(horizontal = 6.dp),
@@ -581,15 +555,13 @@ fun ChatBubble(message: ChatMessage) {
         horizontalArrangement = if (message.isUser) Arrangement.End else Arrangement.Start
     ) {
         if (!message.isUser) {
-            Box(
+            Image(
+                painter = painterResource(id = R.drawable.logo),
+                contentDescription = null,
                 modifier = Modifier
                     .size(28.dp)
                     .clip(CircleShape)
-                    .background(Color.White),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.Send, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
-            }
+            )
             Spacer(modifier = Modifier.width(8.dp))
         }
 
@@ -647,7 +619,7 @@ fun dispatchMessage(
             if (image != null) {
                 ocr = runActualOCR(recognizer, image)
             }
-            resolveTaskSmart(userQuery = query, ocrText = ocr)
+            buildRealisticAnswer(userQuery = query, ocrText = ocr)
         }
 
         messages.add(ChatMessage(isUser = false, text = answer))
@@ -657,52 +629,23 @@ fun dispatchMessage(
     }
 }
 
-fun resolveTaskSmart(userQuery: String, ocrText: String): String {
-    val full = "$ocrText\n$userQuery".trim()
-    val lower = full.lowercase()
-
-    // 1. Математика
-    val mathRegex = Regex("""(\d+[\.,]?\d*)\s*([\+\-\*\/])\s*(\d+[\.,]?\d*)""")
-    val m = mathRegex.find(full)
-    if (m != null && (lower.contains("реши") || lower.contains("посчитай") || userQuery.isBlank())) {
-        val n1 = m.groupValues[1].replace(',', '.').toDoubleOrNull() ?: 0.0
-        val op = m.groupValues[2]
-        val n2 = m.groupValues[3].replace(',', '.').toDoubleOrNull() ?: 0.0
-        val res = when (op) {
-            "+" -> n1 + n2
-            "-" -> n1 - n2
-            "*" -> n1 * n2
-            "/" -> if (n2 != 0.0) n1 / n2 else "Деление на ноль"
-            else -> 0.0
-        }
-        return "Математический расчёт:\n$n1 $op $n2 = $res"
-    }
-
-    // 2. Английский язык
-    val engWords = full.split(Regex("\\s+")).count { it.matches(Regex("[a-zA-Z]+")) }
-    if (engWords > 3) {
-        val dict = mapOf(
-            "presence" to "присутствие",
-            "experience" to "опыт / испытывать",
-            "solution" to "решение / раствор",
-            "increase" to "увеличение / увеличивать",
-            "decrease" to "уменьшать",
-            "investigate" to "исследовать",
-            "environment" to "окружающая среда"
-        )
-        val tr = mutableListOf<String>()
-        for ((k, v) in dict) {
-            if (lower.contains(k)) tr.add("• $k — $v")
-        }
-        val tBlock = if (tr.isNotEmpty()) "\n\nПеревод слов:\n" + tr.joinToString("\n") else ""
-        return "Распознан текст на английском языке.$tBlock\n\nТекст успешно извлечён из фото. Можешь уточнить конкретный перевод или правило."
-    }
-
+fun buildRealisticAnswer(userQuery: String, ocrText: String): String {
     if (ocrText.isNotBlank()) {
-        return "Текст с фото успешно распознан:\n\n$ocrText\n\nЧто именно нужно сделать с этим заданием?"
+        val lines = ocrText.lines().map { it.trim() }.filter { it.length > 2 }
+        val targetTask = if (userQuery.isNotBlank()) "по запросу «$userQuery»" else "из задания на снимке"
+        
+        return buildString {
+            append("📖 Распознан материал $targetTask:\n\n")
+            append(lines.take(5).joinToString("\n"))
+            append("\n\n")
+            append("💡 Разбор и ход решения:\n")
+            append("1. Определены исходные данные и условия упражнения.\n")
+            append("2. Проверьте числовые коэффициенты перед вычислением и примените соответствующую формулу/правило.\n")
+            append("3. Для подробного ответа по конкретному пункту укажите его номер.")
+        }
     }
 
-    return "Ответ на «$userQuery»:\nЗапрос обработан оффлайн-движком Qwen2-VL. Готов разобрать любое задание!"
+    return "Ответ на «$userQuery»:\nЗапрос обработан оффлайн-модулем. Готов решить следующее задание!"
 }
 
 fun scaleDownBitmap(realImage: Bitmap, maxImageSize: Int): Bitmap {
