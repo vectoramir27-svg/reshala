@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -16,7 +17,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -27,6 +32,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -36,7 +42,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -118,9 +123,6 @@ fun AppRootNavigation(context: Context) {
     }
 }
 
-// -------------------------------------------------------------------------------------
-// ЭКРАН 1: Приветствие и Авторизация с плавной анимацией
-// -------------------------------------------------------------------------------------
 @Composable
 fun AuthScreen(onLoginSuccess: (String) -> Unit) {
     var username by remember { mutableStateOf("") }
@@ -148,7 +150,7 @@ fun AuthScreen(onLoginSuccess: (String) -> Unit) {
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Default.AutoAwesome,
+                    imageVector = Icons.Default.Star,
                     contentDescription = null,
                     tint = Color.White,
                     modifier = Modifier.size(44.dp)
@@ -242,9 +244,6 @@ fun AuthScreen(onLoginSuccess: (String) -> Unit) {
     }
 }
 
-// -------------------------------------------------------------------------------------
-// ЭКРАН 2: Исправленный экран скачивания с обработкой CDN-редиректов HuggingFace
-// -------------------------------------------------------------------------------------
 @Composable
 fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
     var isDownloading by remember { mutableStateOf(false) }
@@ -275,7 +274,7 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = Icons.Default.CloudDownload,
+                imageVector = Icons.Default.Refresh,
                 contentDescription = null,
                 tint = Color(0xFF3D5AFE),
                 modifier = Modifier.size(38.dp)
@@ -368,9 +367,6 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
     }
 }
 
-// -------------------------------------------------------------------------------------
-// ЭКРАН 3: Основной интерфейс по видео (1-в-1)
-// -------------------------------------------------------------------------------------
 @Composable
 fun TaskSolverScreen() {
     var capturedImage by remember { mutableStateOf<Bitmap?>(null) }
@@ -420,7 +416,7 @@ fun TaskSolverScreen() {
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = Icons.Default.CameraAlt,
+                imageVector = Icons.Default.Star,
                 contentDescription = null,
                 tint = Color(0xFF3D5AFE),
                 modifier = Modifier.size(34.dp)
@@ -462,13 +458,14 @@ fun TaskSolverScreen() {
                     .padding(14.dp),
                 contentAlignment = Alignment.Center
             ) {
-                if (capturedImage != null) {
+                val currentBitmap = capturedImage
+                if (currentBitmap != null) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        AsyncImage(
-                            model = capturedImage,
+                        Image(
+                            bitmap = currentBitmap.asImageBitmap(),
                             contentDescription = "Preview",
                             modifier = Modifier
                                 .weight(1f)
@@ -659,7 +656,6 @@ fun Modifier.drawDottedBorder(color: Color, strokeWidth: Dp, cornerRadius: Dp) =
     }
 )
 
-// Робастный загрузчик с автоматическим переходом по HTTP-редиректам HuggingFace CDN
 suspend fun downloadWithRedirects(
     initialUrl: String,
     dest: File,
