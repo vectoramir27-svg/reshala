@@ -81,7 +81,7 @@ fun AppRootNavigation(context: Context) {
     val isUserLoggedIn = remember { prefs.getBoolean("is_logged_in", false) }
     val modelDir = remember { File(context.filesDir, "models").apply { mkdirs() } }
     val modelFile = remember { File(modelDir, "gemma-2b-it-cpu-int4.bin") }
-    val isModelReady = remember { modelFile.exists() && modelFile.length() > 1_000_000_000L }
+    val isModelReady = remember { modelFile.exists() && modelFile.length() > 500_000_000L }
 
     var currentState by remember {
         mutableStateOf(
@@ -111,7 +111,7 @@ fun AppRootNavigation(context: Context) {
             ScreenState.AUTH -> AuthScreen(
                 onLoginSuccess = { user ->
                     prefs.edit().putBoolean("is_logged_in", true).putString("username", user).apply()
-                    currentState = if (modelFile.exists() && modelFile.length() > 1_000_000_000L) {
+                    currentState = if (modelFile.exists() && modelFile.length() > 500_000_000L) {
                         ScreenState.MAIN_SOLVER
                     } else {
                         ScreenState.DOWNLOAD
@@ -297,7 +297,7 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "Загрузка реальной оффлайн нейросети Gemma (~1.5 ГБ) для работы на процессоре",
+            text = "Загрузка универсальной локальной нейросети (~1.5 ГБ) для всех школьных предметов",
             fontSize = 14.sp,
             color = Color(0xFF757575),
             textAlign = TextAlign.Center
@@ -330,7 +330,6 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
                     isDownloading = true
                     errorText = null
                     scope.launch {
-                        // Мобильная модель MediaPipe Gemma 2B
                         downloadFileWithProgress(
                             urlStr = "https://storage.googleapis.com/mediapipe-models/llm_inference/gemma-2b-it-cpu-int4.bin",
                             dest = modelFile,
@@ -356,7 +355,7 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3D5AFE))
             ) {
-                Text("Скачать нейросеть (~1.5 ГБ)", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text("Скачать оффлайн-модуль (~1.5 ГБ)", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
             }
 
             if (errorText != null) {
@@ -372,9 +371,6 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
     }
 }
 
-// -------------------------------------------------------------------------------------
-// ЭКРАН РЕШЕНИЯ С РЕАЛЬНЫМ ИНФЕРЕНСОМ НЕЙРОСЕТИ
-// -------------------------------------------------------------------------------------
 @Composable
 fun TaskSolverScreen(modelFile: File) {
     val context = LocalContext.current
@@ -385,18 +381,20 @@ fun TaskSolverScreen(modelFile: File) {
     var solutionText by remember { mutableStateOf("") }
     var recognizedTextInfo by remember { mutableStateOf("") }
 
-    // Инициализация локального LLM-движка
     var llmEngine by remember { mutableStateOf<LlmInference?>(null) }
 
+    // Загрузка модели в оперативную память при старте экрана
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             try {
-                val options = LlmInference.LlmInferenceOptions.builder()
-                    .setModelPath(modelFile.absolutePath)
-                    .setMaxTokens(512)
-                    .setResultListener { partial, done -> }
-                    .build()
-                llmEngine = LlmInference.createFromOptions(context, options)
+                if (modelFile.exists()) {
+                    val options = LlmInference.LlmInferenceOptions.builder()
+                        .setModelPath(modelFile.absolutePath)
+                        .setMaxTokens(1024)
+                        .setResultListener { _, _ -> }
+                        .build()
+                    llmEngine = LlmInference.createFromOptions(context, options)
+                }
             } catch (_: Exception) {}
         }
     }
@@ -436,13 +434,13 @@ fun TaskSolverScreen(modelFile: File) {
         AlertDialog(
             onDismissRequest = { showPickerChoice = false },
             title = { Text("Прикрепить фото задания") },
-            text = { Text("Выберите удобный способ добавления снимка") },
+            text = { Text("Сфотографируйте задание или выберите файл из галереи") },
             confirmButton = {
                 TextButton(onClick = {
                     showPickerChoice = false
                     galleryLauncher.launch("image/*")
                 }) {
-                    Text("Выбрать из галереи")
+                    Text("Галерея")
                 }
             },
             dismissButton = {
@@ -454,7 +452,7 @@ fun TaskSolverScreen(modelFile: File) {
                         galleryLauncher.launch("image/*")
                     }
                 }) {
-                    Text("Снять на камеру")
+                    Text("Камера")
                 }
             }
         )
@@ -557,17 +555,17 @@ fun TaskSolverScreen(modelFile: File) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(
                             text = solutionText,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Normal,
                             color = Color(0xFF1E2124),
-                            lineHeight = 20.sp
+                            lineHeight = 22.sp
                         )
                         if (recognizedTextInfo.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
                             Divider()
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "Текст с фото:\n$recognizedTextInfo",
+                                text = "Распознано с фото:\n$recognizedTextInfo",
                                 fontSize = 11.sp,
                                 color = Color.Gray
                             )
@@ -593,33 +591,39 @@ fun TaskSolverScreen(modelFile: File) {
                                 }
                             }
 
-                            // 1. Оптическое считывание текста с картинки
+                            // 1. Оптическое чтение текста
                             stepIndex = 0
                             val ocrText = runActualOCR(recognizer, capturedImage!!)
                             recognizedTextInfo = ocrText
 
-                            // 2. Генерация решения реальной нейросетью на процессоре
+                            // 2. Универсальный инференс оффлайн-нейросети
                             stepIndex = 1
-                            if (ocrText.isEmpty()) {
-                                solutionText = "❌ Текст на снимке не найден. Сфотографируйте задание чётче."
+                            if (ocrText.isBlank()) {
+                                solutionText = "На фото не обнаружен текст. Сделайте снимок четче."
                             } else {
                                 stepIndex = 2
                                 val aiResponse = withContext(Dispatchers.IO) {
                                     try {
                                         if (llmEngine != null) {
+                                            // Промпт под любой предмет: русский, английский, литература, физика, математика
                                             val prompt = """
-                                                Ты помощник по учебе. Выполни задание, которое написано на фото:
-                                                ---
+                                                Ты умный оффлайн-помощник по всем школьным предметам.
+                                                Внимательно прочитай задание ниже и дай структурированный, полезный и точный ответ на русском языке.
+                                                Если это иностранный язык — переведи и объясни.
+                                                Если это русский язык — вставь буквы, объясни правила и разбор.
+                                                Если задача или уравнение — реши пошагово с вычислениями.
+                                                
+                                                Задание с фото:
                                                 $ocrText
-                                                ---
-                                                Дай понятный, полезный и точный ответ на русском языке.
+                                                
+                                                Твой ответ:
                                             """.trimIndent()
-                                            llmEngine?.generateResponse(prompt) ?: "Ошибка инференса модели."
+                                            llmEngine?.generateResponse(prompt) ?: "Сбой генерации ответа."
                                         } else {
-                                            "Модель ещё загружается в оперативную память. Подождите пару секунд и повторите."
+                                            "Модель ещё загружается в память устройства. Пожалуйста, подождите несколько секунд и нажмите кнопку снова."
                                         }
                                     } catch (e: Exception) {
-                                        "Ошибка выполнения нейросетью: ${e.localizedMessage}"
+                                        "Ошибка при обработке нейросетью: ${e.localizedMessage}"
                                     }
                                 }
                                 solutionText = aiResponse
@@ -640,7 +644,7 @@ fun TaskSolverScreen(modelFile: File) {
                 Text("Отправить задание", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
         } else {
-            // Реальный счётчик времени работы нейросети
+            // Реальный счётчик времени работы нейросети на процессоре
             Box(
                 modifier = Modifier.size(96.dp),
                 contentAlignment = Alignment.Center
