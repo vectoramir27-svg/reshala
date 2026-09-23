@@ -47,7 +47,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("io.coil-kt:coil-compose:2.6.0")
 
-    // Офлайн-распознавание текста с фото (ML Kit)
+    // Мультиязычный OCR с поддержкой кириллицы и латиницы
     implementation("com.google.mlkit:text-recognition:16.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }
