@@ -2,6 +2,8 @@ package com.reshala.ai
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -31,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -48,6 +51,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.coroutines.resume
@@ -292,7 +296,7 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "Для оффлайн работы необходимо установить локальную модель (~1.0 ГБ)",
+            text = "Для оффлайн работы необходимо установить локальную модель",
             fontSize = 14.sp,
             color = Color(0xFF757575),
             textAlign = TextAlign.Center
@@ -325,7 +329,6 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
                     isDownloading = true
                     errorText = null
                     scope.launch {
-                        // Точный проверенный прямой URL с параметром download=true
                         downloadDirectModel(
                             urlStr = "https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/Qwen2-VL-2B-Instruct-Q4_K_M.gguf?download=true",
                             dest = modelFile,
@@ -369,6 +372,7 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
 
 @Composable
 fun TaskSolverScreen() {
+    val context = LocalContext.current
     var capturedImage by remember { mutableStateOf<Bitmap?>(null) }
     var isProcessing by remember { mutableStateOf(false) }
     var processingSeconds by remember { mutableIntStateOf(0) }
@@ -376,9 +380,28 @@ fun TaskSolverScreen() {
     var solutionText by remember { mutableStateOf("") }
     var rawRecognizedText by remember { mutableStateOf("") }
 
-    val cameraLauncher = rememberLauncherForActivityResult(
+    // Безопасный выбор фото без вылетов и сжатие
+    val galleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
+                val originalBitmap = BitmapFactory.decodeStream(inputStream)
+                inputStream?.close()
+                if (originalBitmap != null) {
+                    // Масштабируем фото, чтобы не переполнять память Android
+                    capturedImage = scaleDownBitmap(originalBitmap, 1280)
+                    solutionText = ""
+                    rawRecognizedText = ""
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    val cameraPhotoLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicturePreview()
-    ) { bitmap ->
+    ) { bitmap: Bitmap? ->
         if (bitmap != null) {
             capturedImage = bitmap
             solutionText = ""
@@ -386,8 +409,37 @@ fun TaskSolverScreen() {
         }
     }
 
+    var showPickerChoice by remember { mutableStateOf(false) }
     val recognizer = remember { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
     val scope = rememberCoroutineScope()
+
+    if (showPickerChoice) {
+        AlertDialog(
+            onDismissRequest = { showPickerChoice = false },
+            title = { Text("Прикрепить фото задачи") },
+            text = { Text("Выберите удобный способ добавления снимка") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showPickerChoice = false
+                    galleryLauncher.launch("image/*")
+                }) {
+                    Text("Выбрать из галереи")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showPickerChoice = false
+                    try {
+                        cameraPhotoLauncher.launch(null)
+                    } catch (_: Exception) {
+                        galleryLauncher.launch("image/*")
+                    }
+                }) {
+                    Text("Снять на камеру")
+                }
+            }
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -462,16 +514,16 @@ fun TaskSolverScreen() {
                                 .clip(RoundedCornerShape(12.dp)),
                             contentScale = ContentScale.Fit
                         )
-                        TextButton(onClick = { cameraLauncher.launch(null) }) {
+                        TextButton(onClick = { showPickerChoice = true }) {
                             Text("Изменить фото", color = Color(0xFF3D5AFE), fontSize = 14.sp)
                         }
                     }
                 } else {
                     Button(
-                        onClick = { cameraLauncher.launch(null) },
+                        onClick = { showPickerChoice = true },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE8EAF6))
                     ) {
-                        Text("Сделать фото задачи", color = Color(0xFF3D5AFE))
+                        Text("Прикрепить фото задачи", color = Color(0xFF3D5AFE))
                     }
                 }
             }
@@ -522,18 +574,15 @@ fun TaskSolverScreen() {
                                 }
                             }
 
-                            // Шаг 1: Оптическое распознавание
                             stepIndex = 0
                             val recognized = runActualOCR(recognizer, capturedImage!!)
                             rawRecognizedText = recognized
                             delay(400L)
 
-                            // Шаг 2: Анализ условий
                             stepIndex = 1
                             val solution = solveRealTask(recognized)
                             delay(500L)
 
-                            // Шаг 3: Формирование ответа
                             stepIndex = 2
                             delay(300L)
                             solutionText = solution
@@ -615,6 +664,18 @@ fun TaskSolverScreen() {
 
         Spacer(modifier = Modifier.height(32.dp))
     }
+}
+
+// Защита памяти: уменьшение размера больших картинок с камеры
+fun scaleDownBitmap(realImage: Bitmap, maxImageSize: Int): Bitmap {
+    val ratio = Math.min(
+        maxImageSize.toFloat() / realImage.width,
+        maxImageSize.toFloat() / realImage.height
+    )
+    if (ratio >= 1.0f) return realImage
+    val width = Math.round(ratio * realImage.width)
+    val height = Math.round(ratio * realImage.height)
+    return Bitmap.createScaledBitmap(realImage, width, height, true)
 }
 
 suspend fun runActualOCR(recognizer: com.google.mlkit.vision.text.TextRecognizer, bitmap: Bitmap): String {
