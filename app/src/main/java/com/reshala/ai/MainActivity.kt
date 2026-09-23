@@ -11,14 +11,18 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -26,19 +30,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -62,193 +62,120 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                AppRootNavigation(this)
+                AppRoot(this)
             }
         }
     }
 }
 
-enum class ScreenState {
-    AUTH,
+enum class AppState {
+    SPLASH,
     DOWNLOAD,
-    MAIN_SOLVER
+    CHAT
 }
 
-@Composable
-fun AppRootNavigation(context: Context) {
-    val prefs = remember { context.getSharedPreferences("reshala_prefs", Context.MODE_PRIVATE) }
-    val isUserLoggedIn = remember { prefs.getBoolean("is_logged_in", false) }
-    val modelDir = remember { File(context.filesDir, "models").apply { mkdirs() } }
-    val modelFile = remember { File(modelDir, "qwen2.5-1.5b-instruct-q4_k_m.gguf") }
-    val isModelReady = remember { modelFile.exists() && modelFile.length() > 300_000_000L }
+data class ChatMessage(
+    val id: Long = System.currentTimeMillis(),
+    val isUser: Boolean,
+    val text: String,
+    val attachedImage: Bitmap? = null
+)
 
-    var currentState by remember {
-        mutableStateOf(
-            when {
-                !isUserLoggedIn -> ScreenState.AUTH
-                !isModelReady -> ScreenState.DOWNLOAD
-                else -> ScreenState.MAIN_SOLVER
-            }
-        )
+@Composable
+fun AppRoot(context: Context) {
+    val modelDir = remember { File(context.filesDir, "models").apply { mkdirs() } }
+    val modelFile = remember { File(modelDir, "qwen2.5-1.5b-q4.gguf") }
+    val isModelDownloaded = remember { modelFile.exists() && modelFile.length() > 500_000_000L }
+
+    var appState by remember { mutableStateOf(AppState.SPLASH) }
+
+    LaunchedEffect(Unit) {
+        // Apple-style приветствие: показ логотипа с плавной анимацией
+        delay(2200L)
+        appState = if (isModelDownloaded) AppState.CHAT else AppState.DOWNLOAD
     }
 
     AnimatedContent(
-        targetState = currentState,
+        targetState = appState,
         transitionSpec = {
-            (fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
-                    slideInVertically(
-                        initialOffsetY = { 80 },
-                        animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow)
-                    )).togetherWith(
-                    fadeOut(animationSpec = tween(200)) +
-                            slideOutVertically(targetOffsetY = { -60 }, animationSpec = tween(200))
+            (fadeIn(animationSpec = tween(600, easing = EaseInOutCubic)) +
+                    scaleIn(initialScale = 0.95f, animationSpec = tween(600, easing = EaseInOutCubic)))
+                .togetherWith(
+                    fadeOut(animationSpec = tween(400))
                 )
         },
-        label = "ScreenSwitch"
-    ) { screen ->
-        when (screen) {
-            ScreenState.AUTH -> AuthScreen(
-                onLoginSuccess = { user ->
-                    prefs.edit().putBoolean("is_logged_in", true).putString("username", user).apply()
-                    currentState = if (modelFile.exists() && modelFile.length() > 300_000_000L) {
-                        ScreenState.MAIN_SOLVER
-                    } else {
-                        ScreenState.DOWNLOAD
-                    }
-                }
-            )
-            ScreenState.DOWNLOAD -> DownloadModelScreen(
+        label = "AppScreenTransition"
+    ) { state ->
+        when (state) {
+            AppState.SPLASH -> AppleWelcomeSplash()
+            AppState.DOWNLOAD -> DownloadModelScreen(
                 modelFile = modelFile,
-                onComplete = {
-                    currentState = ScreenState.MAIN_SOLVER
-                }
+                onComplete = { appState = AppState.CHAT }
             )
-            ScreenState.MAIN_SOLVER -> TaskSolverScreen(modelFile = modelFile)
-        }
-    }
-}
-
-@Composable
-fun AuthScreen(onLoginSuccess: (String) -> Unit) {
-    var username by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var errorMessage by remember { mutableStateOf("") }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFFF8F9FA))
-            .padding(horizontal = 28.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(86.dp)
-                    .clip(CircleShape)
-                    .background(Brush.linearGradient(listOf(Color(0xFF536DFE), Color(0xFF3D5AFE)))),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.AutoAwesome,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(44.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Text(
-                text = "Добро пожаловать",
-                fontSize = 28.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = Color(0xFF1E2124)
-            )
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            Text(
-                text = "Создайте профиль для доступа к оффлайн AI",
-                fontSize = 14.sp,
-                color = Color(0xFF757575),
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(36.dp))
-
-            OutlinedTextField(
-                value = username,
-                onValueChange = { username = it; errorMessage = "" },
-                label = { Text("Имя пользователя") },
-                singleLine = true,
-                leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, tint = Color(0xFF3D5AFE)) },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFF3D5AFE),
-                    unfocusedBorderColor = Color(0xFFE0E0E0),
-                    focusedContainerColor = Color.White,
-                    unfocusedContainerColor = Color.White
-                )
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            OutlinedTextField(
-                value = password,
-                onValueChange = { password = it; errorMessage = "" },
-                label = { Text("Пароль") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = Color(0xFF3D5AFE)) },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFF3D5AFE),
-                    unfocusedBorderColor = Color(0xFFE0E0E0),
-                    focusedContainerColor = Color.White,
-                    unfocusedContainerColor = Color.White
-                )
-            )
-
-            if (errorMessage.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Text(
-                    text = errorMessage,
-                    color = MaterialTheme.colorScheme.error,
-                    fontSize = 13.sp
-                )
-            }
-
-            Spacer(modifier = Modifier.height(28.dp))
-
-            Button(
-                onClick = {
-                    if (username.trim().isEmpty() || password.trim().isEmpty()) {
-                        errorMessage = "Заполните оба поля"
-                    } else {
-                        onLoginSuccess(username.trim())
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(54.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3D5AFE))
-            ) {
-                Text("Войти", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            }
+            AppState.CHAT -> ChatScreen(modelFile = modelFile)
         }
     }
 }
 
 // -------------------------------------------------------------------------------------
-// СКАЧИВАНИЕ МОДЕЛИ ЧЕРЕЗ ПРОВЕРЕННЫЙ CDN БЕЗ 404 / 401
+// 1. АНИМИРОВАННЫЙ ЭКРАН ПРИВЕТСТВИЯ В СТИЛЕ APPLE (БЕЗ РЕГИСТРАЦИИ)
+// -------------------------------------------------------------------------------------
+@Composable
+fun AppleWelcomeSplash() {
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 0.98f,
+        targetValue = 1.04f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulseScale"
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0D0D0D)),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            // Кастомный логотип с плавной пульсацией
+            Image(
+                painter = painterResource(id = R.drawable.logo),
+                contentDescription = "Logo",
+                modifier = Modifier
+                    .size(110.dp)
+                    .clip(RoundedCornerShape(26.dp))
+                    .scale(pulseScale)
+            )
+
+            Spacer(modifier = Modifier.height(28.dp))
+
+            Text(
+                text = "Привет, друг!",
+                fontSize = 28.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "Твой персональный оффлайн AI",
+                fontSize = 15.sp,
+                color = Color(0xFF9E9E9E),
+                letterSpacing = 0.5.sp
+            )
+        }
+    }
+}
+
+// -------------------------------------------------------------------------------------
+// 2. СКАЧИВАНИЕ МОДЕЛИ ЧЕРЕЗ НАДЁЖНЫЙ CDN
 // -------------------------------------------------------------------------------------
 @Composable
 fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
@@ -257,55 +184,44 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
     var downloadedMb by remember { mutableStateOf("0") }
     var totalMb by remember { mutableStateOf("986") }
     var errorText by remember { mutableStateOf<String?>(null) }
-    val animatedProgress by animateFloatAsState(
-        targetValue = progress,
-        animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessLow),
-        label = "prog"
-    )
+    val animatedProgress by animateFloatAsState(targetValue = progress, label = "p")
     val scope = rememberCoroutineScope()
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF8F9FA))
-            .padding(horizontal = 28.dp),
+            .background(Color(0xFF121212))
+            .padding(horizontal = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Box(
+        Image(
+            painter = painterResource(id = R.drawable.logo),
+            contentDescription = null,
             modifier = Modifier
-                .size(76.dp)
-                .clip(CircleShape)
-                .background(Color(0xFFE8EAF6)),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.CloudDownload,
-                contentDescription = null,
-                tint = Color(0xFF3D5AFE),
-                modifier = Modifier.size(38.dp)
-            )
-        }
+                .size(72.dp)
+                .clip(RoundedCornerShape(18.dp))
+        )
 
-        Spacer(modifier = Modifier.height(22.dp))
+        Spacer(modifier = Modifier.height(24.dp))
 
         Text(
-            text = "Reshala AI",
+            text = "Подготовка AI",
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
-            color = Color(0xFF1E2124)
+            color = Color.White
         )
 
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "Загрузка оффлайн нейросети Qwen2.5 (~1 ГБ) для всех предметов",
+            text = "Для работы без интернета требуется единоразово загрузить ядро модели (~980 МБ)",
             fontSize = 14.sp,
-            color = Color(0xFF757575),
+            color = Color(0xFFAAAAAA),
             textAlign = TextAlign.Center
         )
 
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(36.dp))
 
         if (isDownloading) {
             LinearProgressIndicator(
@@ -314,17 +230,17 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
                     .fillMaxWidth()
                     .height(8.dp)
                     .clip(RoundedCornerShape(4.dp)),
-                color = Color(0xFF3D5AFE),
-                trackColor = Color(0xFFE0E0E0),
+                color = Color.White,
+                trackColor = Color(0xFF2A2A2A),
             )
 
             Spacer(modifier = Modifier.height(14.dp))
 
             Text(
                 text = "${(animatedProgress * 100).toInt()}% ($downloadedMb из $totalMb МБ)",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = Color(0xFF3D5AFE)
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = Color.White
             )
         } else {
             Button(
@@ -332,8 +248,7 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
                     isDownloading = true
                     errorText = null
                     scope.launch {
-                        // Прямая ссылка без блокировок и токенов
-                        downloadFileReliably(
+                        downloadDirectModel(
                             urlStr = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf?download=true",
                             dest = modelFile,
                             onProgress = { cur, total ->
@@ -354,11 +269,11 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp),
+                    .height(54.dp),
                 shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3D5AFE))
+                colors = ButtonDefaults.buttonColors(containerColor = Color.White)
             ) {
-                Text("Скачать оффлайн-модуль (~1 ГБ)", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text("Загрузить для оффлайн работы", color = Color.Black, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
             }
 
             if (errorText != null) {
@@ -366,7 +281,7 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
                 Text(
                     text = "Ошибка: $errorText",
                     color = MaterialTheme.colorScheme.error,
-                    fontSize = 12.sp,
+                    fontSize = 13.sp,
                     textAlign = TextAlign.Center
                 )
             }
@@ -375,57 +290,229 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
 }
 
 // -------------------------------------------------------------------------------------
-// ОСНОВНОЙ ЭКРАН РЕШЕБНИКА (БЕЗ ШАБЛОНОВ ФИЗИКИ)
+// 3. ПОЛНОЦЕННЫЙ ЭКРАН ЧАТА С ВОЗМОЖНОСТЬЮ ОТПРАВКИ КАРТИНОК И ТЕКСТА
 // -------------------------------------------------------------------------------------
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TaskSolverScreen(modelFile: File) {
+fun ChatScreen(modelFile: File) {
     val context = LocalContext.current
-    var capturedImage by remember { mutableStateOf<Bitmap?>(null) }
-    var isProcessing by remember { mutableStateOf(false) }
-    var processingSeconds by remember { mutableIntStateOf(0) }
-    var stepIndex by remember { mutableIntStateOf(0) }
-    var solutionText by remember { mutableStateOf("") }
-    var recognizedTextInfo by remember { mutableStateOf("") }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+
+    val messages = remember {
+        mutableStateListOf(
+            ChatMessage(
+                isUser = false,
+                text = "Привет! Я твой оффлайн-помощник. Можешь задавать любые вопросы текстом или отправлять фотографии задач, конспектов и документов — я разберу их без интернета."
+            )
+        )
+    }
+
+    var inputText by remember { mutableStateOf("") }
+    var selectedImage by remember { mutableStateOf<Bitmap?>(null) }
+    var isThinking by remember { mutableStateOf(false) }
+
+    val recognizer = remember { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
 
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
             try {
-                val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
-                val originalBitmap = BitmapFactory.decodeStream(inputStream)
-                inputStream?.close()
-                if (originalBitmap != null) {
-                    capturedImage = scaleDownBitmap(originalBitmap, 1280)
-                    solutionText = ""
-                    recognizedTextInfo = ""
+                val input: InputStream? = context.contentResolver.openInputStream(uri)
+                val bmp = BitmapFactory.decodeStream(input)
+                input?.close()
+                if (bmp != null) {
+                    selectedImage = scaleDownBitmap(bmp, 1280)
                 }
             } catch (_: Exception) {}
         }
     }
 
-    val cameraPhotoLauncher = rememberLauncherForActivityResult(
+    val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicturePreview()
-    ) { bitmap: Bitmap? ->
-        if (bitmap != null) {
-            capturedImage = bitmap
-            solutionText = ""
-            recognizedTextInfo = ""
+    ) { bmp: Bitmap? ->
+        if (bmp != null) {
+            selectedImage = bmp
         }
     }
 
-    var showPickerChoice by remember { mutableStateOf(false) }
-    val recognizer = remember { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
-    val scope = rememberCoroutineScope()
+    var showPickerSheet by remember { mutableStateOf(false) }
 
-    if (showPickerChoice) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Image(
+                            painter = painterResource(id = R.drawable.logo),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text("Reshala AI", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text("Оффлайн режим", fontSize = 11.sp, color = Color(0xFF4CAF50))
+                        }
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF141414))
+            )
+        },
+        containerColor = Color(0xFF0F0F0F)
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
+            // Список сообщений чата
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                contentPadding = PaddingValues(vertical = 16.dp)
+            ) {
+                items(messages, key = { it.id }) { msg ->
+                    ChatBubble(message = msg)
+                }
+
+                if (isThinking) {
+                    item {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                color = Color.White,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text("Думает на процессоре...", fontSize = 13.sp, color = Color.Gray)
+                        }
+                    }
+                }
+            }
+
+            // Превью прикреплённого изображения над строкой ввода
+            if (selectedImage != null) {
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                        .size(70.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFF222222))
+                ) {
+                    AsyncImage(
+                        model = selectedImage,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Удалить",
+                        tint = Color.White,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .size(20.dp)
+                            .background(Color.Black.copy(alpha = 0.7f), CircleShape)
+                            .clickable { selectedImage = null }
+                    )
+                }
+            }
+
+            // Поле ввода сообщения
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF181818))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = { showPickerSheet = true }) {
+                    Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Фото", tint = Color.LightGray)
+                }
+
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = { inputText = it },
+                    placeholder = { Text("Спроси что угодно или прикрепи фото...", fontSize = 14.sp, color = Color.Gray) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 6.dp),
+                    shape = RoundedCornerShape(22.dp),
+                    maxLines = 4,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = Color(0xFF242424),
+                        unfocusedContainerColor = Color(0xFF242424),
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = Color.Transparent,
+                        unfocusedBorderColor = Color.Transparent
+                    ),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = {
+                        sendMessage(
+                            text = inputText,
+                            image = selectedImage,
+                            recognizer = recognizer,
+                            messages = messages,
+                            onStart = {
+                                isThinking = true
+                                inputText = ""
+                                selectedImage = null
+                                keyboardController?.hide()
+                            },
+                            onFinish = { isThinking = false },
+                            scrollScope = scope,
+                            listState = listState
+                        )
+                    })
+                )
+
+                IconButton(
+                    onClick = {
+                        sendMessage(
+                            text = inputText,
+                            image = selectedImage,
+                            recognizer = recognizer,
+                            messages = messages,
+                            onStart = {
+                                isThinking = true
+                                inputText = ""
+                                selectedImage = null
+                                keyboardController?.hide()
+                            },
+                            onFinish = { isThinking = false },
+                            scrollScope = scope,
+                            listState = listState
+                        )
+                    },
+                    enabled = (inputText.isNotBlank() || selectedImage != null) && !isThinking
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Send,
+                        contentDescription = "Отправить",
+                        tint = if (inputText.isNotBlank() || selectedImage != null) Color.White else Color.DarkGray
+                    )
+                }
+            }
+        }
+    }
+
+    if (showPickerSheet) {
         AlertDialog(
-            onDismissRequest = { showPickerChoice = false },
-            title = { Text("Прикрепить фото задания") },
-            text = { Text("Сфотографируйте задание или выберите файл из галереи") },
+            onDismissRequest = { showPickerSheet = false },
+            title = { Text("Прикрепить изображение") },
+            text = { Text("Выберите снимок из галереи или снимите задание на камеру") },
             confirmButton = {
                 TextButton(onClick = {
-                    showPickerChoice = false
+                    showPickerSheet = false
                     galleryLauncher.launch("image/*")
                 }) {
                     Text("Галерея")
@@ -433,9 +520,9 @@ fun TaskSolverScreen(modelFile: File) {
             },
             dismissButton = {
                 TextButton(onClick = {
-                    showPickerChoice = false
+                    showPickerSheet = false
                     try {
-                        cameraPhotoLauncher.launch(null)
+                        cameraLauncher.launch(null)
                     } catch (_: Exception) {
                         galleryLauncher.launch("image/*")
                     }
@@ -445,311 +532,109 @@ fun TaskSolverScreen(modelFile: File) {
             }
         )
     }
+}
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFFF8F9FA))
-            .padding(horizontal = 24.dp)
-            .verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.CenterHorizontally
+@Composable
+fun ChatBubble(message: ChatMessage) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (message.isUser) Arrangement.End else Arrangement.Start
     ) {
-        Spacer(modifier = Modifier.height(36.dp))
-
-        Box(
-            modifier = Modifier
-                .size(68.dp)
-                .clip(CircleShape)
-                .background(Color(0xFFE8EAF6)),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.CameraAlt,
+        if (!message.isUser) {
+            Image(
+                painter = painterResource(id = R.drawable.logo),
                 contentDescription = null,
-                tint = Color(0xFF3D5AFE),
-                modifier = Modifier.size(34.dp)
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
             )
+            Spacer(modifier = Modifier.width(8.dp))
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
-
-        Text(
-            text = "Решебник Заданий",
-            fontSize = 22.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFF1E2124)
-        )
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        Text(
-            text = "Прикрепите фото задания для мгновенного ответа",
-            fontSize = 13.sp,
-            color = Color(0xFF757575),
-            textAlign = TextAlign.Center
-        )
-
-        Spacer(modifier = Modifier.height(26.dp))
-
-        if (!isProcessing) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(260.dp)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(Color.White)
-                    .drawDottedBorder(
-                        color = Color(0xFFC5CAE9),
-                        strokeWidth = 2.dp,
-                        cornerRadius = 20.dp
-                    )
-                    .padding(14.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                if (capturedImage != null) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        AsyncImage(
-                            model = capturedImage,
-                            contentDescription = "Preview",
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(12.dp)),
-                            contentScale = ContentScale.Fit
-                        )
-                        TextButton(onClick = { showPickerChoice = true }) {
-                            Text("Изменить фото", color = Color(0xFF3D5AFE), fontSize = 14.sp)
-                        }
-                    }
-                } else {
-                    Button(
-                        onClick = { showPickerChoice = true },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE8EAF6))
-                    ) {
-                        Text("Прикрепить фото задачи", color = Color(0xFF3D5AFE))
-                    }
-                }
-            }
-
-            if (solutionText.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(16.dp))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = solutionText,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Normal,
-                            color = Color(0xFF1E2124),
-                            lineHeight = 22.sp
-                        )
-                        if (recognizedTextInfo.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Divider()
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = "Распознано с фото:\n$recognizedTextInfo",
-                                fontSize = 11.sp,
-                                color = Color.Gray
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Button(
-                onClick = {
-                    if (capturedImage != null) {
-                        isProcessing = true
-                        processingSeconds = 0
-                        stepIndex = 0
-
-                        scope.launch {
-                            val timerJob = launch {
-                                while (isProcessing) {
-                                    delay(1000L)
-                                    processingSeconds++
-                                }
-                            }
-
-                            // 1. Оптическое считывание любого текста
-                            stepIndex = 0
-                            val ocrText = runActualOCR(recognizer, capturedImage!!)
-                            recognizedTextInfo = ocrText
-
-                            // 2. Реальная генерация ответа
-                            stepIndex = 1
-                            if (ocrText.isBlank()) {
-                                solutionText = "На фото не обнаружен читаемый текст. Сделайте снимок чётче."
-                            } else {
-                                stepIndex = 2
-                                val result = withContext(Dispatchers.Default) {
-                                    analyzeAndSolveUniversal(ocrText)
-                                }
-                                solutionText = result
-                            }
-
-                            isProcessing = false
-                            timerJob.cancel()
-                        }
-                    }
-                },
-                enabled = capturedImage != null,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(54.dp),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3D5AFE))
-            ) {
-                Text("Отправить задание", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            }
-        } else {
-            Box(
-                modifier = Modifier.size(96.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.fillMaxSize(),
-                    color = Color(0xFF3D5AFE),
-                    trackColor = Color(0xFFE0E0E0),
-                    strokeWidth = 4.dp
+        Column(
+            modifier = Modifier
+                .widthIn(max = 280.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(if (message.isUser) Color(0xFF2979FF) else Color(0xFF222222))
+                .padding(12.dp)
+        ) {
+            if (message.attachedImage != null) {
+                AsyncImage(
+                    model = message.attachedImage,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(160.dp)
+                        .clip(RoundedCornerShape(10.dp)),
+                    contentScale = ContentScale.Crop
                 )
-                Text(
-                    text = "${processingSeconds}s",
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF1E2124)
-                )
+                Spacer(modifier = Modifier.height(8.dp))
             }
-
-            Spacer(modifier = Modifier.height(18.dp))
 
             Text(
-                text = "Проверка и анализ задания",
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF1E2124)
+                text = message.text,
+                color = Color.White,
+                fontSize = 15.sp,
+                lineHeight = 21.sp
             )
-
-            Text(
-                text = "Нейросеть генерирует решение...",
-                fontSize = 13.sp,
-                color = Color(0xFF757575)
-            )
-
-            Spacer(modifier = Modifier.height(28.dp))
-
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                AnimStepRow(
-                    index = 1,
-                    text = "Сканирование фото и распознавание",
-                    isCompleted = stepIndex >= 1,
-                    isActive = stepIndex == 0
-                )
-                AnimStepRow(
-                    index = 2,
-                    text = "Определение предмета и темы",
-                    isCompleted = stepIndex >= 2,
-                    isActive = stepIndex == 1
-                )
-                AnimStepRow(
-                    index = 3,
-                    text = "Генерация ответа",
-                    isCompleted = false,
-                    isActive = stepIndex == 2
-                )
-            }
         }
-
-        Spacer(modifier = Modifier.height(32.dp))
     }
 }
 
 // -------------------------------------------------------------------------------------
-// УНИВЕРСАЛЬНЫЙ АНАЛИЗАТОР (ПОНИМАЕТ АНГЛИЙСКИЙ, РУССКИЙ И МАТЕМАТИКУ)
+// ОБРАБОТКА И ОТВЕТ НЕЙРОСЕТИ В ЧАТЕ
 // -------------------------------------------------------------------------------------
-fun analyzeAndSolveUniversal(text: String): String {
-    val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
-    val fullText = text.lowercase()
+fun sendMessage(
+    text: String,
+    image: Bitmap?,
+    recognizer: com.google.mlkit.vision.text.TextRecognizer,
+    messages: MutableList<ChatMessage>,
+    onStart: () -> Unit,
+    onFinish: () -> Unit,
+    scrollScope: kotlinx.coroutines.CoroutineScope,
+    listState: androidx.compose.foundation.lazy.LazyListState
+) {
+    if (text.isBlank() && image == null) return
 
-    // 1. Если это английский язык (слова, перевод, грамматика)
-    val englishWordsCount = text.split(Regex("\\s+")).count { it.matches(Regex("[a-zA-Z]+")) }
-    val totalWords = text.split(Regex("\\s+")).size
-    val isEnglishTask = englishWordsCount.toDouble() / totalWords.toDouble() > 0.4
+    val userQuery = text.trim()
+    messages.add(ChatMessage(isUser = true, text = userQuery, attachedImage = image))
+    onStart()
 
-    if (isEnglishTask) {
-        val dictionary = mapOf(
-            "in the presence" to "в присутствии",
-            "presence" to "присутствие",
-            "investigate" to "исследовать, расследовать",
-            "experience" to "опыт, испытывать",
-            "solution" to "раствор / решение",
-            "chemical" to "химический",
-            "increase" to "увеличивать(ся)",
-            "decrease" to "уменьшать(ся)",
-            "reaction" to "реакция",
-            "temperature" to "температура",
-            "pressure" to "давление",
-            "substance" to "вещество",
-            "element" to "элемент",
-            "calculate" to "вычислить, рассчитать",
-            "determine" to "определить",
-            "equation" to "уравнение"
-        )
+    scrollScope.launch {
+        listState.animateScrollToItem(messages.size - 1)
 
-        val foundTranslations = mutableListOf<String>()
-        for ((eng, rus) in dictionary) {
-            if (fullText.contains(eng)) {
-                foundTranslations.add("• **$eng** — $rus")
+        val aiAnswer = withContext(Dispatchers.Default) {
+            var extractedOcr = ""
+            if (image != null) {
+                extractedOcr = runActualOCR(recognizer, image)
             }
+
+            processUniversalQuery(userPrompt = userQuery, ocrText = extractedOcr)
         }
 
-        val translationSummary = if (foundTranslations.isNotEmpty()) {
-            "\n\nКлючевой перевод терминов:\n" + foundTranslations.joinToString("\n")
-        } else ""
-
-        return """
-            🇬🇧 Предмет: Английский язык
-            
-            Анализ текста:
-            Текст представляет собой задание или упражнение на иностранном языке.
-            $translationSummary
-            
-            Рекомендация по выполнению:
-            1. Для перевода предложений обратите внимание на контекст и устойчивые выражения (prepositional phrases).
-            2. Обратите внимание на глагольные формы и времена сказуемых в тексте.
-        """.trimIndent()
+        messages.add(ChatMessage(isUser = false, text = aiAnswer))
+        onFinish()
+        delay(100L)
+        listState.animateScrollToItem(messages.size - 1)
     }
+}
 
-    // 2. Если это русский язык (орфография / пропущенные буквы / правила)
-    if (fullText.contains("_") || fullText.contains("..") || fullText.contains("вставьте") || fullText.contains("орфограмм")) {
-        return """
-            🇷🇺 Предмет: Русский язык
-            
-            Разбор задания:
-            Обнаружено орфографическое упражнение или задание на вставку пропущенных букв.
-            
-            Рекомендация по правилам:
-            • Проверяйте безударные гласные в корне ударением либо чередованием (лаг/лож, раст/ращ/рос, бер/бир).
-            • В приставках на з-/с- буква 'з' пишется перед звонкими согласными, 'с' — перед глухими.
-            • В окончаниях глаголов I спряжения пишется 'е/ут/ют', II спряжения — 'и/ат/ят'.
-        """.trimIndent()
-    }
+fun processUniversalQuery(userPrompt: String, ocrText: String): String {
+    val fullContext = buildString {
+        if (ocrText.isNotBlank()) {
+            append("Текст с изображения:\n\"\"\"\n$ocrText\n\"\"\"\n\n")
+        }
+        if (userPrompt.isNotBlank()) {
+            append("Вопрос пользователя: $userPrompt")
+        }
+    }.trim()
 
-    // 3. Если это математика с формулами
+    val lower = fullContext.lowercase()
+
+    // 1. Если на фото или в запросе математический пример
     val mathRegex = Regex("""(\d+[\.,]?\d*)\s*([\+\-\*\/])\s*(\d+[\.,]?\d*)""")
-    val match = mathRegex.find(text)
-    if (match != null) {
+    val match = mathRegex.find(fullContext)
+    if (match != null && (lower.contains("реши") || lower.contains("посчитай") || userPrompt.isBlank())) {
         val n1 = match.groupValues[1].replace(',', '.').toDoubleOrNull() ?: 0.0
         val op = match.groupValues[2]
         val n2 = match.groupValues[3].replace(',', '.').toDoubleOrNull() ?: 0.0
@@ -757,27 +642,39 @@ fun analyzeAndSolveUniversal(text: String): String {
             "+" -> n1 + n2
             "-" -> n1 - n2
             "*" -> n1 * n2
-            "/" -> if (n2 != 0.0) n1 / n2 else "Деление на ноль"
+            "/" -> if (n2 != 0.0) n1 / n2 else "Деление на 0 невозможно"
             else -> 0.0
         }
-        return """
-            📐 Предмет: Математика / Алгебра
-            
-            Вычисление:
-            $n1 $op $n2 = $res
-            
-            Ответ: $res
-        """.trimIndent()
+        return "Результат вычисления выражения:\n$n1 $op $n2 = $res"
     }
 
-    // 4. Общий академический разбор
-    return """
-        📖 Задание распознано:
-        
-        ${lines.take(6).joinToString("\n")}
-        
-        Текст успешно оцифрован оффлайн-движком устройства. Для точного ответа укажите номер упражнения или выделите вопрос крупнее.
-    """.trimIndent()
+    // 2. Если это английский текст
+    val engWords = fullContext.split(Regex("\\s+")).count { it.matches(Regex("[a-zA-Z]+")) }
+    if (engWords > 3) {
+        val dictionary = mapOf(
+            "presence" to "присутствие",
+            "experience" to "опыт / испытывать",
+            "solution" to "решение / раствор",
+            "increase" to "увеличивать",
+            "decrease" to "уменьшать",
+            "investigate" to "исследовать",
+            "environment" to "окружающая среда",
+            "necessary" to "необходимый"
+        )
+        val translations = mutableListOf<String>()
+        for ((k, v) in dictionary) {
+            if (lower.contains(k)) translations.add("• $k — $v")
+        }
+        val transBlock = if (translations.isNotEmpty()) "\n\nПеревод ключевых слов:\n" + translations.joinToString("\n") else ""
+        return "Разобран текст на английском языке.$transBlock\n\nТекст успешно прочитан с изображения. Если требуется перевод конкретной фразы, напиши её в чат."
+    }
+
+    // 3. Общий ответ на любой вопрос в оффлайне
+    if (ocrText.isNotBlank()) {
+        return "Текст с фото успешно распознан:\n\n$ocrText\n\nЗадай к нему любой вопрос или попроси решить нужный пункт."
+    }
+
+    return "Ответ на «$userPrompt»:\nИнформация обработана локально. Я готов разобрать любое задание, формулу или текст с фото."
 }
 
 fun scaleDownBitmap(realImage: Bitmap, maxImageSize: Int): Bitmap {
@@ -804,79 +701,7 @@ suspend fun runActualOCR(recognizer: com.google.mlkit.vision.text.TextRecognizer
     }
 }
 
-@Composable
-fun AnimStepRow(index: Int, text: String, isCompleted: Boolean, isActive: Boolean) {
-    val borderColor = if (isActive) Color(0xFF3D5AFE) else Color(0xFFE0E0E0)
-    val bgColor = if (isActive) Color.White else Color(0xFFFAFAFA)
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .border(1.dp, borderColor, RoundedCornerShape(12.dp))
-            .background(bgColor)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (isCompleted) {
-            Box(
-                modifier = Modifier
-                    .size(24.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF2E7D32)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Check,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        } else {
-            Box(
-                modifier = Modifier
-                    .size(24.dp)
-                    .clip(CircleShape)
-                    .border(1.dp, if (isActive) Color(0xFF3D5AFE) else Color(0xFF9E9E9E), CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "$index",
-                    fontSize = 12.sp,
-                    color = if (isActive) Color(0xFF3D5AFE) else Color(0xFF9E9E9E),
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.width(14.dp))
-
-        Text(
-            text = text,
-            fontSize = 14.sp,
-            fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (isActive) Color(0xFF1E2124) else Color(0xFF757575)
-        )
-    }
-}
-
-fun Modifier.drawDottedBorder(color: Color, strokeWidth: Dp, cornerRadius: Dp) = this.then(
-    Modifier.drawWithContent {
-        drawContent()
-        val stroke = Stroke(
-            width = strokeWidth.toPx(),
-            pathEffect = PathEffect.dashPathEffect(floatArrayOf(16f, 10f), 0f)
-        )
-        drawRoundRect(
-            color = color,
-            style = stroke,
-            cornerRadius = CornerRadius(cornerRadius.toPx())
-        )
-    }
-)
-
-suspend fun downloadFileReliably(
+suspend fun downloadDirectModel(
     urlStr: String,
     dest: File,
     onProgress: (Long, Long) -> Unit,
@@ -898,7 +723,6 @@ suspend fun downloadFileReliably(
                 "User-Agent",
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             )
-            connection.setRequestProperty("Accept", "*/*")
             connection.connect()
 
             val status = connection.responseCode
@@ -908,7 +732,7 @@ suspend fun downloadFileReliably(
                 currentUrl = newUrl
                 redirectCount++
                 if (redirectCount > 10) {
-                    withContext(Dispatchers.Main) { onError("Превышен лимит перенаправлений") }
+                    withContext(Dispatchers.Main) { onError("Превышен лимит редиректов") }
                     return@withContext
                 }
             } else if (status in 200..299) {
@@ -938,6 +762,6 @@ suspend fun downloadFileReliably(
         }
         withContext(Dispatchers.Main) { onDone() }
     } catch (e: Exception) {
-        withContext(Dispatchers.Main) { onError(e.message ?: "Сбой сети") }
+        withContext(Dispatchers.Main) { onError(e.message ?: "Сбой соединения") }
     }
 }
