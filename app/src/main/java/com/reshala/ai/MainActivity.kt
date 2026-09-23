@@ -75,7 +75,7 @@ fun AppRootNavigation(context: Context) {
     val prefs = remember { context.getSharedPreferences("reshala_prefs", Context.MODE_PRIVATE) }
     val isUserLoggedIn = remember { prefs.getBoolean("is_logged_in", false) }
     val modelDir = remember { File(context.filesDir, "models").apply { mkdirs() } }
-    val modelFile = remember { File(modelDir, "qwen2-vl-2b-q4.gguf") }
+    val modelFile = remember { File(modelDir, "Qwen2-VL-2B-Instruct-Q4_K_M.gguf") }
     val isModelDownloaded = remember { modelFile.exists() && modelFile.length() > 500_000_000L }
 
     var currentState by remember {
@@ -292,7 +292,7 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "Для оффлайн работы необходимо установить локальную модель (~1.9 ГБ)",
+            text = "Для оффлайн работы необходимо установить локальную модель (~1.0 ГБ)",
             fontSize = 14.sp,
             color = Color(0xFF757575),
             textAlign = TextAlign.Center
@@ -325,8 +325,9 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
                     isDownloading = true
                     errorText = null
                     scope.launch {
+                        // Точный проверенный прямой URL с параметром download=true
                         downloadDirectModel(
-                            urlStr = "https://hf-mirror.com/Qwen/Qwen2-VL-2B-Instruct-GGUF/resolve/main/qwen2-vl-2b-instruct-q4_k_m.gguf",
+                            urlStr = "https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/Qwen2-VL-2B-Instruct-Q4_K_M.gguf?download=true",
                             dest = modelFile,
                             onProgress = { cur, total ->
                                 progress = if (total > 0) cur.toFloat() / total.toFloat() else 0f
@@ -521,20 +522,20 @@ fun TaskSolverScreen() {
                                 }
                             }
 
-                            // Шаг 1: Оптическое распознавание ML Kit
+                            // Шаг 1: Оптическое распознавание
                             stepIndex = 0
                             val recognized = runActualOCR(recognizer, capturedImage!!)
                             rawRecognizedText = recognized
-                            delay(500L)
+                            delay(400L)
 
                             // Шаг 2: Анализ условий
                             stepIndex = 1
                             val solution = solveRealTask(recognized)
-                            delay(600L)
+                            delay(500L)
 
                             // Шаг 3: Формирование ответа
                             stepIndex = 2
-                            delay(400L)
+                            delay(300L)
                             solutionText = solution
 
                             isProcessing = false
@@ -700,7 +701,7 @@ fun solveRealTask(ocrText: String): String {
         return "✅ Вычислено выражение:\n$n1 $op $n2 = $res"
     }
 
-    return "Распознан следующий текст:\n\n\"$ocrText\"\n\nКонкретная формула или переменные (m, S, v, t) не определены. Проверьте условия задачи."
+    return "Распознан текст:\n\n\"$ocrText\"\n\nКонкретная формула или переменные (m, S, v, t) не определены. Проверьте условия задачи."
 }
 
 fun extractValue(text: String, keys: List<String>): Double? {
@@ -806,9 +807,11 @@ suspend fun downloadDirectModel(
             connection.instanceFollowRedirects = false
             connection.connectTimeout = 30000
             connection.readTimeout = 30000
-            connection.setRequestProperty("User-Agent", "Wget/1.21.3")
+            connection.setRequestProperty(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            )
             connection.setRequestProperty("Accept", "*/*")
-            connection.setRequestProperty("Connection", "Keep-Alive")
             connection.connect()
 
             val status = connection.responseCode
@@ -818,7 +821,7 @@ suspend fun downloadDirectModel(
                 currentUrl = newUrl
                 redirectCount++
                 if (redirectCount > 10) {
-                    withContext(Dispatchers.Main) { onError("Превышен лимит редиректов") }
+                    withContext(Dispatchers.Main) { onError("Превышен лимит перенаправлений") }
                     return@withContext
                 }
             } else if (status in 200..299) {
