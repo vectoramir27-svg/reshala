@@ -89,7 +89,7 @@ fun AppRoot(context: Context) {
     var appState by remember { mutableStateOf(AppState.SPLASH) }
 
     LaunchedEffect(Unit) {
-        delay(2000L)
+        delay(1800L)
         appState = if (isDownloaded) AppState.CHAT else AppState.DOWNLOAD
     }
 
@@ -174,6 +174,12 @@ fun DownloadModelScreen(textModel: File, onComplete: () -> Unit) {
     val animatedProgress by animateFloatAsState(targetValue = progress, label = "p")
     val scope = rememberCoroutineScope()
 
+    // Список рабочих зеркал: сначала быстрое CDN зеркало без блокировок, затем оригинал
+    val mirrors = listOf(
+        "https://hf-mirror.com/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/Qwen2-VL-2B-Instruct-Q4_K_M.gguf",
+        "https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/Qwen2-VL-2B-Instruct-Q4_K_M.gguf?download=true"
+    )
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -235,20 +241,33 @@ fun DownloadModelScreen(textModel: File, onComplete: () -> Unit) {
                     isDownloading = true
                     errorText = null
                     scope.launch {
-                        val ok = downloadDirectModel(
-                            urlStr = "https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/Qwen2-VL-2B-Instruct-Q4_K_M.gguf?download=true",
-                            dest = textModel,
-                            onProgress = { cur, _ ->
-                                val curMb = cur / (1024 * 1024)
-                                downloadedMb = curMb.toString()
-                                progress = (curMb.toFloat() / 1520f).coerceIn(0f, 1f)
-                            },
-                            onError = { err -> isDownloading = false; errorText = err }
-                        )
+                        var isSuccess = false
+                        var lastError = "Не удалось подключиться к серверу"
 
-                        if (ok) {
+                        for (mirrorUrl in mirrors) {
+                            val ok = downloadDirectModelWithMirrors(
+                                urlStr = mirrorUrl,
+                                dest = textModel,
+                                onProgress = { cur, total ->
+                                    val curMb = cur / (1024 * 1024)
+                                    downloadedMb = curMb.toString()
+                                    val maxTotal = if (total > 0) total else 1520L * 1024 * 1024
+                                    progress = (cur.toFloat() / maxTotal.toFloat()).coerceIn(0f, 1f)
+                                },
+                                onError = { err -> lastError = err }
+                            )
+                            if (ok) {
+                                isSuccess = true
+                                break
+                            }
+                        }
+
+                        if (isSuccess) {
                             isDownloading = false
                             onComplete()
+                        } else {
+                            isDownloading = false
+                            errorText = lastError
                         }
                     }
                 },
@@ -274,9 +293,6 @@ fun DownloadModelScreen(textModel: File, onComplete: () -> Unit) {
     }
 }
 
-// -------------------------------------------------------------------------------------
-// ДИЗАЙН ЧАТА В СТИЛЕ CHATGPT
-// -------------------------------------------------------------------------------------
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatGptScreen() {
@@ -289,7 +305,7 @@ fun ChatGptScreen() {
         mutableStateListOf(
             ChatMessage(
                 isUser = false,
-                text = "Привет! Я твой оффлайн AI-ассистент. Можешь отправить мне текстовый вопрос или фото любого упражнения из учебника — я разберу условие и решу его пошагово."
+                text = "Привет! Я твой оффлайн AI-ассистент. Можешь отправить мне текстовый вопрос или фото задания из учебника — я разберу условие и решу его пошагово."
             )
         )
     }
@@ -575,7 +591,6 @@ fun ChatGptScreen() {
     }
 }
 
-// Ряд сообщения в стиле ChatGPT
 @Composable
 fun GptChatRow(message: ChatMessage) {
     Row(
@@ -623,9 +638,6 @@ fun GptChatRow(message: ChatMessage) {
     }
 }
 
-// -------------------------------------------------------------------------------------
-// ЛОГИКА ОБРАБОТКИ СООБЩЕНИЙ И ГЕНЕРАЦИИ РЕШЕНИЯ
-// -------------------------------------------------------------------------------------
 fun sendGptMessage(
     text: String,
     image: Bitmap?,
@@ -653,7 +665,6 @@ fun sendGptMessage(
             generateCleanEducationalResponse(userPrompt = query, ocrText = ocr)
         }
 
-        // Плавный эффект печати
         val msgId = System.currentTimeMillis()
         messages.add(ChatMessage(id = msgId, isUser = false, text = ""))
         val targetIndex = messages.indexOfFirst { it.id == msgId }
@@ -681,8 +692,7 @@ fun generateCleanEducationalResponse(userPrompt: String, ocrText: String): Strin
 
     if (cleanOcr.isNotEmpty()) {
         val header = if (userPrompt.isNotBlank()) "Разбор задания по запросу: «$userPrompt»" else "Решение задания со снимка:"
-        
-        // Поиск математических выражений в распознанном тексте
+
         val mathMatch = Regex("""(\d+[\.,]?\d*)\s*([\+\-\*\/])\s*(\d+[\.,]?\d*)""").find(ocrText)
         if (mathMatch != null) {
             val a = mathMatch.groupValues[1].replace(',', '.').toDoubleOrNull() ?: 0.0
@@ -712,7 +722,7 @@ fun generateCleanEducationalResponse(userPrompt: String, ocrText: String): Strin
             ${cleanOcr.take(4).joinToString("\n")}
             
             Пошаговый план решения:
-            1. Проанализированы исходные числовые данные и формулы упражнения.
+            1. Проанализированы исходные данные и формулы упражнения.
             2. Выполните подстановку известных величин в базовое уравнение темы.
             3. Если нужен разбор конкретного пункта, напишите: «Реши номер 1» или «Объясни вторую строчку».
         """.trimIndent()
@@ -749,7 +759,8 @@ suspend fun runActualOCR(recognizer: com.google.mlkit.vision.text.TextRecognizer
     }
 }
 
-suspend fun downloadDirectModel(
+// Загрузчик с поддержкой перенаправлений и автоматического переключения зеркал
+suspend fun downloadDirectModelWithMirrors(
     urlStr: String,
     dest: File,
     onProgress: (Long, Long) -> Unit,
@@ -764,11 +775,11 @@ suspend fun downloadDirectModel(
             val url = URL(currentUrl)
             connection = url.openConnection() as HttpURLConnection
             connection.instanceFollowRedirects = false
-            connection.connectTimeout = 30000
+            connection.connectTimeout = 20000
             connection.readTimeout = 30000
             connection.setRequestProperty(
                 "User-Agent",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             )
             connection.connect()
 
@@ -779,13 +790,13 @@ suspend fun downloadDirectModel(
                 currentUrl = newUrl
                 redirectCount++
                 if (redirectCount > 10) {
-                    withContext(Dispatchers.Main) { onError("Превышен лимит редиректов") }
+                    withContext(Dispatchers.Main) { onError("Превышен лимит перенаправлений") }
                     return@withContext false
                 }
             } else if (status in 200..299) {
                 break
             } else {
-                withContext(Dispatchers.Main) { onError("Ошибка сервера: $status") }
+                withContext(Dispatchers.Main) { onError("HTTP код: $status") }
                 return@withContext false
             }
         }
@@ -809,7 +820,7 @@ suspend fun downloadDirectModel(
         }
         true
     } catch (e: Exception) {
-        withContext(Dispatchers.Main) { onError(e.message ?: "Сбой соединения") }
+        withContext(Dispatchers.Main) { onError(e.localizedMessage ?: "Сбой соединения") }
         false
     }
 }
