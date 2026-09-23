@@ -327,7 +327,7 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
                     errorText = null
                     scope.launch {
                         downloadWithRedirects(
-                            initialUrl = "https://huggingface.co/Qwen/Qwen2-VL-2B-Instruct-GGUF/resolve/main/qwen2-vl-2b-instruct-q4_k_m.gguf",
+                            initialUrl = "https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/Qwen2-VL-2B-Instruct-Q4_K_M.gguf",
                             dest = modelFile,
                             onProgress = { cur, total ->
                                 progress = if (total > 0) cur.toFloat() / total.toFloat() else 0f
@@ -672,8 +672,9 @@ suspend fun downloadWithRedirects(
             val url = URL(currentUrl)
             connection = url.openConnection() as HttpURLConnection
             connection.instanceFollowRedirects = true
-            connection.setRequestProperty("User-Agent", "Mozilla/5.0")
-            connection.connectTimeout = 15000
+            connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            connection.setRequestProperty("Accept", "*/*")
+            connection.connectTimeout = 20000
             connection.readTimeout = 30000
             connection.connect()
 
@@ -690,7 +691,7 @@ suspend fun downloadWithRedirects(
                 connection.disconnect()
                 currentUrl = newUrl
                 redirectCount++
-                if (redirectCount > 6) {
+                if (redirectCount > 8) {
                     withContext(Dispatchers.Main) { onError("Превышен лимит редиректов") }
                     return@withContext
                 }
@@ -721,6 +722,6 @@ suspend fun downloadWithRedirects(
         }
         withContext(Dispatchers.Main) { onDone() }
     } catch (e: Exception) {
-        withContext(Dispatchers.Main) { onError(e.message ?: "Сбой соединения") }
+        withContext(Dispatchers.Main) { onError(e.message ?: "Сбой сети") }
     }
 }
