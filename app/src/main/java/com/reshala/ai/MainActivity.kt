@@ -2,7 +2,11 @@ package com.reshala.ai
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.ImageDecoder
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.MediaStore
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -18,10 +22,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -35,6 +41,7 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -86,20 +93,18 @@ fun AppRootNavigation(context: Context) {
         )
     }
 
+    // Кинематографичный переход: плавное затухание + растушевание масштаба
     AnimatedContent(
         targetState = currentState,
         transitionSpec = {
-            (fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
-                    slideInVertically(
-                        initialOffsetY = { 80 },
-                        animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow)
-                    ))
+            (fadeIn(animationSpec = tween(600, easing = FastOutSlowInEasing)) +
+                    scaleIn(initialScale = 0.94f, animationSpec = tween(600, easing = FastOutSlowInEasing)))
                 .togetherWith(
-                    fadeOut(animationSpec = tween(250)) +
-                            slideOutVertically(targetOffsetY = { -60 }, animationSpec = tween(250))
+                    fadeOut(animationSpec = tween(400, easing = FastOutLinearInEasing)) +
+                            scaleOut(targetScale = 1.04f, animationSpec = tween(400, easing = FastOutLinearInEasing))
                 )
         },
-        label = "ScreenSwitch"
+        label = "CinematicScreenTransition"
     ) { screen ->
         when (screen) {
             ScreenState.AUTH -> AuthScreen(
@@ -123,6 +128,9 @@ fun AppRootNavigation(context: Context) {
     }
 }
 
+// -------------------------------------------------------------------------------------
+// ЭКРАН 1: Приветствие и Авторизация
+// -------------------------------------------------------------------------------------
 @Composable
 fun AuthScreen(onLoginSuccess: (String) -> Unit) {
     var username by remember { mutableStateOf("") }
@@ -150,17 +158,17 @@ fun AuthScreen(onLoginSuccess: (String) -> Unit) {
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Default.Star,
+                    imageVector = Icons.Default.Memory,
                     contentDescription = null,
                     tint = Color.White,
-                    modifier = Modifier.size(44.dp)
+                    modifier = Modifier.size(46.dp)
                 )
             }
 
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                text = "Добро пожаловать",
+                text = "Reshala AI",
                 fontSize = 28.sp,
                 fontWeight = FontWeight.ExtraBold,
                 color = Color(0xFF1E2124)
@@ -244,17 +252,21 @@ fun AuthScreen(onLoginSuccess: (String) -> Unit) {
     }
 }
 
+// -------------------------------------------------------------------------------------
+// ЭКРАН 2: Скачивание модели с честным отображением (~1.0 ГБ)
+// -------------------------------------------------------------------------------------
 @Composable
 fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
     var isDownloading by remember { mutableStateOf(false) }
     var progress by remember { mutableFloatStateOf(0f) }
     var downloadedMb by remember { mutableStateOf("0") }
-    var totalMb by remember { mutableStateOf("0") }
+    var totalMb by remember { mutableStateOf("986") }
     var errorText by remember { mutableStateOf<String?>(null) }
+
     val animatedProgress by animateFloatAsState(
         targetValue = progress,
-        animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessLow),
-        label = "prog"
+        animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessLow),
+        label = "smoothProgress"
     )
     val scope = rememberCoroutineScope()
 
@@ -268,16 +280,16 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
     ) {
         Box(
             modifier = Modifier
-                .size(76.dp)
+                .size(80.dp)
                 .clip(CircleShape)
                 .background(Color(0xFFE8EAF6)),
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = Icons.Default.Refresh,
+                imageVector = Icons.Default.CloudDownload,
                 contentDescription = null,
                 tint = Color(0xFF3D5AFE),
-                modifier = Modifier.size(38.dp)
+                modifier = Modifier.size(42.dp)
             )
         }
 
@@ -293,7 +305,7 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "Для оффлайн работы необходимо установить локальную модель (~1.9 ГБ)",
+            text = "Для оффлайн работы необходимо установить локальную модель (~1.0 ГБ)",
             fontSize = 14.sp,
             color = Color(0xFF757575),
             textAlign = TextAlign.Center
@@ -332,7 +344,7 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
                             onProgress = { cur, total ->
                                 progress = if (total > 0) cur.toFloat() / total.toFloat() else 0f
                                 downloadedMb = (cur / (1024 * 1024)).toString()
-                                totalMb = (total / (1024 * 1024)).toString()
+                                totalMb = if (total > 0) (total / (1024 * 1024)).toString() else "986"
                             },
                             onDone = {
                                 isDownloading = false
@@ -367,14 +379,38 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
     }
 }
 
+// -------------------------------------------------------------------------------------
+// ЭКРАН 3: Основной интерфейс (дизайн 1-в-1 по видео, без вылетов камеры)
+// -------------------------------------------------------------------------------------
 @Composable
 fun TaskSolverScreen() {
+    val context = LocalContext.current
     var capturedImage by remember { mutableStateOf<Bitmap?>(null) }
     var isProcessing by remember { mutableStateOf(false) }
     var countdown by remember { mutableIntStateOf(9) }
     var stepIndex by remember { mutableIntStateOf(0) }
     var solutionText by remember { mutableStateOf("") }
 
+    // Безопасный выбор фото из галереи / встроенного средства (никогда не крашит)
+    val galleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            try {
+                val bitmap = if (Build.VERSION.SDK_INT < 28) {
+                    @Suppress("DEPRECATION")
+                    MediaStore.Images.Media.getBitmap(context.contentResolver, it)
+                } else {
+                    val source = ImageDecoder.createSource(context.contentResolver, it)
+                    ImageDecoder.decodeBitmap(source)
+                }
+                capturedImage = bitmap
+                solutionText = ""
+            } catch (_: Exception) {}
+        }
+    }
+
+    // Фото с камеры
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicturePreview()
     ) { bitmap ->
@@ -408,6 +444,7 @@ fun TaskSolverScreen() {
     ) {
         Spacer(modifier = Modifier.height(36.dp))
 
+        // Иконка фотоаппарата в круге (вместо звезды)
         Box(
             modifier = Modifier
                 .size(68.dp)
@@ -416,7 +453,7 @@ fun TaskSolverScreen() {
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = Icons.Default.Star,
+                imageVector = Icons.Default.PhotoCamera,
                 contentDescription = null,
                 tint = Color(0xFF3D5AFE),
                 modifier = Modifier.size(34.dp)
@@ -444,6 +481,7 @@ fun TaskSolverScreen() {
         Spacer(modifier = Modifier.height(26.dp))
 
         if (!isProcessing) {
+            // Пунктирный блок
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -472,16 +510,41 @@ fun TaskSolverScreen() {
                                 .clip(RoundedCornerShape(12.dp)),
                             contentScale = ContentScale.Fit
                         )
-                        TextButton(onClick = { cameraLauncher.launch(null) }) {
-                            Text("Изменить фото", color = Color(0xFF3D5AFE), fontSize = 14.sp)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            modifier = Modifier.padding(top = 4.dp)
+                        ) {
+                            TextButton(onClick = {
+                                try { cameraLauncher.launch(null) } catch (_: Exception) { galleryLauncher.launch("image/*") }
+                            }) {
+                                Text("Камера", color = Color(0xFF3D5AFE), fontSize = 14.sp)
+                            }
+                            TextButton(onClick = { galleryLauncher.launch("image/*") }) {
+                                Text("Галерея", color = Color(0xFF3D5AFE), fontSize = 14.sp)
+                            }
                         }
                     }
                 } else {
-                    Button(
-                        onClick = { cameraLauncher.launch(null) },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE8EAF6))
-                    ) {
-                        Text("Сделать фото задачи", color = Color(0xFF3D5AFE))
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(
+                            onClick = {
+                                try { cameraLauncher.launch(null) } catch (_: Exception) { galleryLauncher.launch("image/*") }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE8EAF6))
+                        ) {
+                            Icon(Icons.Default.PhotoCamera, contentDescription = null, tint = Color(0xFF3D5AFE))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Камера", color = Color(0xFF3D5AFE))
+                        }
+
+                        Button(
+                            onClick = { galleryLauncher.launch("image/*") },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE8EAF6))
+                        ) {
+                            Icon(Icons.Default.PhotoLibrary, contentDescription = null, tint = Color(0xFF3D5AFE))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Галерея", color = Color(0xFF3D5AFE))
+                        }
                     }
                 }
             }
@@ -517,6 +580,7 @@ fun TaskSolverScreen() {
                 Text("Отправить задание", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
         } else {
+            // Круговой таймер
             Box(
                 modifier = Modifier.size(96.dp),
                 contentAlignment = Alignment.Center
