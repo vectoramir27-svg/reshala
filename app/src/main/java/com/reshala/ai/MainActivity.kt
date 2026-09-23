@@ -7,16 +7,16 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.Image
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,16 +24,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -48,40 +51,219 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                AppNavigator(this)
+                AppRootNavigation(this)
             }
         }
     }
 }
 
-@Composable
-fun AppNavigator(context: Context) {
-    val modelDir = remember { File(context.filesDir, "models").apply { mkdirs() } }
-    val modelFile = remember { File(modelDir, "qwen2-vl-2b-q4.gguf") }
-    var isModelReady by remember { mutableStateOf(modelFile.exists() && modelFile.length() > 1_000_000_000L) }
-
-    if (!isModelReady) {
-        SetupScreen(
-            modelFile = modelFile,
-            onReady = { isModelReady = true }
-        )
-    } else {
-        SolverMainScreen()
-    }
+enum class ScreenState {
+    AUTH,
+    DOWNLOAD,
+    MAIN_SOLVER
 }
 
 @Composable
-fun SetupScreen(modelFile: File, onReady: () -> Unit) {
+fun AppRootNavigation(context: Context) {
+    val prefs = remember { context.getSharedPreferences("reshala_prefs", Context.MODE_PRIVATE) }
+    val isUserLoggedIn = remember { prefs.getBoolean("is_logged_in", false) }
+    val modelDir = remember { File(context.filesDir, "models").apply { mkdirs() } }
+    val modelFile = remember { File(modelDir, "qwen2-vl-2b-q4.gguf") }
+    val isModelDownloaded = remember { modelFile.exists() && modelFile.length() > 500_000_000L }
+
+    var currentState by remember {
+        mutableStateOf(
+            when {
+                !isUserLoggedIn -> ScreenState.AUTH
+                !isModelDownloaded -> ScreenState.DOWNLOAD
+                else -> ScreenState.MAIN_SOLVER
+            }
+        )
+    }
+
+    AnimatedContent(
+        targetState = currentState,
+        transitionSpec = {
+            (fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
+                    slideInVertically(
+                        initialOffsetY = { 80 },
+                        animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow)
+                    ))
+                .togetherWith(
+                    fadeOut(animationSpec = tween(250)) +
+                            slideOutVertically(targetOffsetY = { -60 }, animationSpec = tween(250))
+                )
+        },
+        label = "ScreenSwitch"
+    ) { screen ->
+        when (screen) {
+            ScreenState.AUTH -> AuthScreen(
+                onLoginSuccess = { user ->
+                    prefs.edit().putBoolean("is_logged_in", true).putString("username", user).apply()
+                    currentState = if (modelFile.exists() && modelFile.length() > 500_000_000L) {
+                        ScreenState.MAIN_SOLVER
+                    } else {
+                        ScreenState.DOWNLOAD
+                    }
+                }
+            )
+            ScreenState.DOWNLOAD -> DownloadModelScreen(
+                modelFile = modelFile,
+                onComplete = {
+                    currentState = ScreenState.MAIN_SOLVER
+                }
+            )
+            ScreenState.MAIN_SOLVER -> TaskSolverScreen()
+        }
+    }
+}
+
+// -------------------------------------------------------------------------------------
+// ЭКРАН 1: Приветствие и Авторизация с плавной анимацией
+// -------------------------------------------------------------------------------------
+@Composable
+fun AuthScreen(onLoginSuccess: (String) -> Unit) {
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var errorMessage by remember { mutableStateOf("") }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFF8F9FA))
+            .padding(horizontal = 28.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(86.dp)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.linearGradient(listOf(Color(0xFF536DFE), Color(0xFF3D5AFE)))
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.AutoAwesome,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(44.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Text(
+                text = "Добро пожаловать",
+                fontSize = 28.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = Color(0xFF1E2124)
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = "Создайте профиль для доступа к оффлайн AI",
+                fontSize = 14.sp,
+                color = Color(0xFF757575),
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(36.dp))
+
+            OutlinedTextField(
+                value = username,
+                onValueChange = { username = it; errorMessage = "" },
+                label = { Text("Имя пользователя или никнейм") },
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, tint = Color(0xFF3D5AFE)) },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Color(0xFF3D5AFE),
+                    unfocusedBorderColor = Color(0xFFE0E0E0),
+                    focusedContainerColor = Color.White,
+                    unfocusedContainerColor = Color.White
+                )
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it; errorMessage = "" },
+                label = { Text("Пароль") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = Color(0xFF3D5AFE)) },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Color(0xFF3D5AFE),
+                    unfocusedBorderColor = Color(0xFFE0E0E0),
+                    focusedContainerColor = Color.White,
+                    unfocusedContainerColor = Color.White
+                )
+            )
+
+            if (errorMessage.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = errorMessage,
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 13.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.height(28.dp))
+
+            Button(
+                onClick = {
+                    if (username.trim().isEmpty() || password.trim().isEmpty()) {
+                        errorMessage = "Заполните оба поля"
+                    } else {
+                        onLoginSuccess(username.trim())
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(54.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3D5AFE))
+            ) {
+                Text("Продолжить", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------------------------------
+// ЭКРАН 2: Исправленный экран скачивания с обработкой CDN-редиректов HuggingFace
+// -------------------------------------------------------------------------------------
+@Composable
+fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
     var isDownloading by remember { mutableStateOf(false) }
     var progress by remember { mutableFloatStateOf(0f) }
-    val animatedProgress by animateFloatAsState(targetValue = progress, label = "p")
+    var downloadedMb by remember { mutableStateOf("0") }
+    var totalMb by remember { mutableStateOf("0") }
+    var errorText by remember { mutableStateOf<String?>(null) }
+    val animatedProgress by animateFloatAsState(
+        targetValue = progress,
+        animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessLow),
+        label = "prog"
+    )
     val scope = rememberCoroutineScope()
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFFF8F9FA))
-            .padding(28.dp),
+            .padding(horizontal = 28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -93,14 +275,14 @@ fun SetupScreen(modelFile: File, onReady: () -> Unit) {
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = Icons.Default.Refresh,
+                imageVector = Icons.Default.CloudDownload,
                 contentDescription = null,
                 tint = Color(0xFF3D5AFE),
                 modifier = Modifier.size(38.dp)
             )
         }
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(22.dp))
 
         Text(
             text = "Reshala AI",
@@ -130,25 +312,36 @@ fun SetupScreen(modelFile: File, onReady: () -> Unit) {
                 color = Color(0xFF3D5AFE),
                 trackColor = Color(0xFFE0E0E0),
             )
-            Spacer(modifier = Modifier.height(10.dp))
+
+            Spacer(modifier = Modifier.height(14.dp))
+
             Text(
-                text = "${(animatedProgress * 100).toInt()}% скачано",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
+                text = "${(animatedProgress * 100).toInt()}% скачано ($downloadedMb из $totalMb МБ)",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
                 color = Color(0xFF3D5AFE)
             )
         } else {
             Button(
                 onClick = {
                     isDownloading = true
+                    errorText = null
                     scope.launch {
-                        downloadModelDirect(
-                            urlStr = "https://huggingface.co/Qwen/Qwen2-VL-2B-Instruct-GGUF/resolve/main/qwen2-vl-2b-instruct-q4_k_m.gguf",
+                        downloadWithRedirects(
+                            initialUrl = "https://huggingface.co/Qwen/Qwen2-VL-2B-Instruct-GGUF/resolve/main/qwen2-vl-2b-instruct-q4_k_m.gguf",
                             dest = modelFile,
-                            onProgress = { cur, total -> progress = cur.toFloat() / total.toFloat() },
-                            onComplete = {
+                            onProgress = { cur, total ->
+                                progress = if (total > 0) cur.toFloat() / total.toFloat() else 0f
+                                downloadedMb = (cur / (1024 * 1024)).toString()
+                                totalMb = (total / (1024 * 1024)).toString()
+                            },
+                            onDone = {
                                 isDownloading = false
-                                onReady()
+                                onComplete()
+                            },
+                            onError = { err ->
+                                isDownloading = false
+                                errorText = err
                             }
                         )
                     }
@@ -159,14 +352,27 @@ fun SetupScreen(modelFile: File, onReady: () -> Unit) {
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3D5AFE))
             ) {
-                Text("Установить необходимые файлы", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text("Скачать оффлайн-модуль", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            }
+
+            if (errorText != null) {
+                Spacer(modifier = Modifier.height(14.dp))
+                Text(
+                    text = "Ошибка: $errorText",
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center
+                )
             }
         }
     }
 }
 
+// -------------------------------------------------------------------------------------
+// ЭКРАН 3: Основной интерфейс по видео (1-в-1)
+// -------------------------------------------------------------------------------------
 @Composable
-fun SolverMainScreen() {
+fun TaskSolverScreen() {
     var capturedImage by remember { mutableStateOf<Bitmap?>(null) }
     var isProcessing by remember { mutableStateOf(false) }
     var countdown by remember { mutableIntStateOf(9) }
@@ -192,7 +398,7 @@ fun SolverMainScreen() {
                 if (countdown == 6) stepIndex = 1
                 if (countdown == 3) stepIndex = 2
             }
-            solutionText = "Дано:\nm = 1420 кг\nS = 900 см² = 0.09 м²\ng = 10 Н/кг\n\nРешение:\np = F / S = (m * g) / S\np = (1420 * 10) / 0.09 ≈ 157 777 Па"
+            solutionText = "Дано:\nm = 1420 кг\nS = 900 см² = 0.09 м²\ng = 10 Н/кг\np - ?\n\nРешение:\np = F / S = (m * g) / S\np = (1420 * 10) / 0.09 ≈ 157 777 Па"
             isProcessing = false
         }
     }
@@ -213,7 +419,12 @@ fun SolverMainScreen() {
                 .background(Color(0xFFE8EAF6)),
             contentAlignment = Alignment.Center
         ) {
-            Text("📷", fontSize = 28.sp)
+            Icon(
+                imageVector = Icons.Default.CameraAlt,
+                contentDescription = null,
+                tint = Color(0xFF3D5AFE),
+                modifier = Modifier.size(34.dp)
+            )
         }
 
         Spacer(modifier = Modifier.height(14.dp))
@@ -256,8 +467,8 @@ fun SolverMainScreen() {
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        Image(
-                            bitmap = capturedImage!!.asImageBitmap(),
+                        AsyncImage(
+                            model = capturedImage,
                             contentDescription = "Preview",
                             modifier = Modifier
                                 .weight(1f)
@@ -448,17 +659,55 @@ fun Modifier.drawDottedBorder(color: Color, strokeWidth: Dp, cornerRadius: Dp) =
     }
 )
 
-suspend fun downloadModelDirect(
-    urlStr: String,
+// Робастный загрузчик с автоматическим переходом по HTTP-редиректам HuggingFace CDN
+suspend fun downloadWithRedirects(
+    initialUrl: String,
     dest: File,
     onProgress: (Long, Long) -> Unit,
-    onComplete: () -> Unit
+    onDone: () -> Unit,
+    onError: (String) -> Unit
 ) = withContext(Dispatchers.IO) {
     try {
-        val connection = URL(urlStr).openConnection() as HttpURLConnection
-        connection.connect()
+        var currentUrl = initialUrl
+        var connection: HttpURLConnection
+        var redirectCount = 0
+
+        while (true) {
+            val url = URL(currentUrl)
+            connection = url.openConnection() as HttpURLConnection
+            connection.instanceFollowRedirects = true
+            connection.setRequestProperty("User-Agent", "Mozilla/5.0")
+            connection.connectTimeout = 15000
+            connection.readTimeout = 30000
+            connection.connect()
+
+            val status = connection.responseCode
+            if (status in listOf(
+                    HttpURLConnection.HTTP_MOVED_PERM,
+                    HttpURLConnection.HTTP_MOVED_TEMP,
+                    HttpURLConnection.HTTP_SEE_OTHER,
+                    307,
+                    308
+                )
+            ) {
+                val newUrl = connection.getHeaderField("Location")
+                connection.disconnect()
+                currentUrl = newUrl
+                redirectCount++
+                if (redirectCount > 6) {
+                    withContext(Dispatchers.Main) { onError("Превышен лимит редиректов") }
+                    return@withContext
+                }
+            } else if (status in 200..299) {
+                break
+            } else {
+                withContext(Dispatchers.Main) { onError("Код сервера: $status") }
+                return@withContext
+            }
+        }
+
         val totalLength = connection.contentLengthLong
-        val buffer = ByteArray(32768)
+        val buffer = ByteArray(64 * 1024)
         var totalRead: Long = 0
 
         connection.inputStream.use { input ->
@@ -467,11 +716,15 @@ suspend fun downloadModelDirect(
                 while (input.read(buffer).also { read = it } != -1) {
                     output.write(buffer, 0, read)
                     totalRead += read
-                    if (totalLength > 0) onProgress(totalRead, totalLength)
+                    withContext(Dispatchers.Main) {
+                        onProgress(totalRead, totalLength)
+                    }
                 }
                 output.flush()
             }
         }
-        withContext(Dispatchers.Main) { onComplete() }
-    } catch (_: Exception) {}
+        withContext(Dispatchers.Main) { onDone() }
+    } catch (e: Exception) {
+        withContext(Dispatchers.Main) { onError(e.message ?: "Сбой соединения") }
+    }
 }
