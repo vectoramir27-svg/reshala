@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
@@ -79,21 +80,14 @@ fun AppRootNavigation(context: Context) {
     val prefs = remember { context.getSharedPreferences("reshala_prefs", Context.MODE_PRIVATE) }
     val isUserLoggedIn = remember { prefs.getBoolean("is_logged_in", false) }
     val modelDir = remember { File(context.filesDir, "models").apply { mkdirs() } }
-    
-    // Два необходимых файла (LLM + Визуальный проектор для картинок)
-    val textModelFile = remember { File(modelDir, "Qwen2-VL-2B-Instruct-Q4_K_M.gguf") }
-    val visionProjFile = remember { File(modelDir, "mmproj-Qwen2-VL-2B-Instruct-Q8_0.gguf") }
-    
-    val isReady = remember { 
-        textModelFile.exists() && textModelFile.length() > 800_000_000L &&
-        visionProjFile.exists() && visionProjFile.length() > 500_000_000L
-    }
+    val modelFile = remember { File(modelDir, "gemma-2b-it-cpu-int4.bin") }
+    val isModelReady = remember { modelFile.exists() && modelFile.length() > 1_000_000_000L }
 
     var currentState by remember {
         mutableStateOf(
             when {
                 !isUserLoggedIn -> ScreenState.AUTH
-                !isReady -> ScreenState.DOWNLOAD
+                !isModelReady -> ScreenState.DOWNLOAD
                 else -> ScreenState.MAIN_SOLVER
             }
         )
@@ -117,7 +111,7 @@ fun AppRootNavigation(context: Context) {
             ScreenState.AUTH -> AuthScreen(
                 onLoginSuccess = { user ->
                     prefs.edit().putBoolean("is_logged_in", true).putString("username", user).apply()
-                    currentState = if (textModelFile.exists() && visionProjFile.exists()) {
+                    currentState = if (modelFile.exists() && modelFile.length() > 1_000_000_000L) {
                         ScreenState.MAIN_SOLVER
                     } else {
                         ScreenState.DOWNLOAD
@@ -125,13 +119,12 @@ fun AppRootNavigation(context: Context) {
                 }
             )
             ScreenState.DOWNLOAD -> DownloadModelScreen(
-                textModel = textModelFile,
-                visionProj = visionProjFile,
+                modelFile = modelFile,
                 onComplete = {
                     currentState = ScreenState.MAIN_SOLVER
                 }
             )
-            ScreenState.MAIN_SOLVER -> TaskSolverScreen()
+            ScreenState.MAIN_SOLVER -> TaskSolverScreen(modelFile = modelFile)
         }
     }
 }
@@ -255,20 +248,12 @@ fun AuthScreen(onLoginSuccess: (String) -> Unit) {
     }
 }
 
-// -------------------------------------------------------------------------------------
-// СКАЧИВАНИЕ 2 ГБ: LLM (1.2 ГБ) + Визуальный модуль для картинок (710 МБ)
-// -------------------------------------------------------------------------------------
 @Composable
-fun DownloadModelScreen(
-    textModel: File,
-    visionProj: File,
-    onComplete: () -> Unit
-) {
+fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
     var isDownloading by remember { mutableStateOf(false) }
-    var currentStepName by remember { mutableStateOf("Подготовка оффлайн-модулей") }
     var progress by remember { mutableFloatStateOf(0f) }
     var downloadedMb by remember { mutableStateOf("0") }
-    var totalMb by remember { mutableStateOf("1950") }
+    var totalMb by remember { mutableStateOf("1500") }
     var errorText by remember { mutableStateOf<String?>(null) }
     val animatedProgress by animateFloatAsState(
         targetValue = progress,
@@ -312,7 +297,7 @@ fun DownloadModelScreen(
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "Для оффлайн распознавания фото и картинок скачивается полный пакет (~1.95 ГБ)",
+            text = "Загрузка реальной оффлайн нейросети Gemma (~1.5 ГБ) для работы на процессоре",
             fontSize = 14.sp,
             color = Color(0xFF757575),
             textAlign = TextAlign.Center
@@ -321,15 +306,6 @@ fun DownloadModelScreen(
         Spacer(modifier = Modifier.height(32.dp))
 
         if (isDownloading) {
-            Text(
-                text = currentStepName,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color(0xFF1E2124)
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
             LinearProgressIndicator(
                 progress = { animatedProgress },
                 modifier = Modifier
@@ -354,49 +330,24 @@ fun DownloadModelScreen(
                     isDownloading = true
                     errorText = null
                     scope.launch {
-                        // 1. Скачиваем текстовое ядро (~1.2 ГБ)
-                        currentStepName = "1/2 Загрузка языкового ядра Qwen2 (~1.2 ГБ)..."
-                        var part1Downloaded = 0L
-                        val part1TotalEst = 1250L * 1024 * 1024
-
-                        val success1 = downloadFileSafely(
-                            urlStr = "https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/Qwen2-VL-2B-Instruct-Q4_K_M.gguf?download=true",
-                            dest = textModel,
-                            onProgress = { cur, _ ->
-                                part1Downloaded = cur
-                                val totalCombined = part1TotalEst + (710L * 1024 * 1024)
-                                progress = cur.toFloat() / totalCombined.toFloat()
+                        // Мобильная модель MediaPipe Gemma 2B
+                        downloadFileWithProgress(
+                            urlStr = "https://storage.googleapis.com/mediapipe-models/llm_inference/gemma-2b-it-cpu-int4.bin",
+                            dest = modelFile,
+                            onProgress = { cur, total ->
+                                progress = if (total > 0) cur.toFloat() / total.toFloat() else 0f
                                 downloadedMb = (cur / (1024 * 1024)).toString()
+                                if (total > 0) totalMb = (total / (1024 * 1024)).toString()
+                            },
+                            onDone = {
+                                isDownloading = false
+                                onComplete()
                             },
                             onError = { err ->
                                 isDownloading = false
                                 errorText = err
                             }
                         )
-
-                        if (!success1) return@launch
-
-                        // 2. Скачиваем проектор для картинок (~710 МБ)
-                        currentStepName = "2/2 Загрузка модуля зрения для фото (~710 МБ)..."
-                        val success2 = downloadFileSafely(
-                            urlStr = "https://huggingface.co/ggml-org/Qwen2-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen2-VL-2B-Instruct-Q8_0.gguf?download=true",
-                            dest = visionProj,
-                            onProgress = { cur, _ ->
-                                val combined = part1Downloaded + cur
-                                val totalCombined = part1TotalEst + (710L * 1024 * 1024)
-                                progress = (combined.toFloat() / totalCombined.toFloat()).coerceAtMost(1f)
-                                downloadedMb = (combined / (1024 * 1024)).toString()
-                            },
-                            onError = { err ->
-                                isDownloading = false
-                                errorText = err
-                            }
-                        )
-
-                        if (success2) {
-                            isDownloading = false
-                            onComplete()
-                        }
                     }
                 },
                 modifier = Modifier
@@ -405,7 +356,7 @@ fun DownloadModelScreen(
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3D5AFE))
             ) {
-                Text("Скачать оффлайн-модуль (~2 ГБ)", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text("Скачать нейросеть (~1.5 ГБ)", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
             }
 
             if (errorText != null) {
@@ -422,17 +373,33 @@ fun DownloadModelScreen(
 }
 
 // -------------------------------------------------------------------------------------
-// ОСНОВНОЙ ЭКРАН РЕШЕБНИКА
+// ЭКРАН РЕШЕНИЯ С РЕАЛЬНЫМ ИНФЕРЕНСОМ НЕЙРОСЕТИ
 // -------------------------------------------------------------------------------------
 @Composable
-fun TaskSolverScreen() {
+fun TaskSolverScreen(modelFile: File) {
     val context = LocalContext.current
     var capturedImage by remember { mutableStateOf<Bitmap?>(null) }
     var isProcessing by remember { mutableStateOf(false) }
     var processingSeconds by remember { mutableIntStateOf(0) }
     var stepIndex by remember { mutableIntStateOf(0) }
     var solutionText by remember { mutableStateOf("") }
-    var rawRecognizedText by remember { mutableStateOf("") }
+    var recognizedTextInfo by remember { mutableStateOf("") }
+
+    // Инициализация локального LLM-движка
+    var llmEngine by remember { mutableStateOf<LlmInference?>(null) }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            try {
+                val options = LlmInference.LlmInferenceOptions.builder()
+                    .setModelPath(modelFile.absolutePath)
+                    .setMaxTokens(512)
+                    .setResultListener { partial, done -> }
+                    .build()
+                llmEngine = LlmInference.createFromOptions(context, options)
+            } catch (_: Exception) {}
+        }
+    }
 
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -445,7 +412,7 @@ fun TaskSolverScreen() {
                 if (originalBitmap != null) {
                     capturedImage = scaleDownBitmap(originalBitmap, 1280)
                     solutionText = ""
-                    rawRecognizedText = ""
+                    recognizedTextInfo = ""
                 }
             } catch (_: Exception) {}
         }
@@ -457,7 +424,7 @@ fun TaskSolverScreen() {
         if (bitmap != null) {
             capturedImage = bitmap
             solutionText = ""
-            rawRecognizedText = ""
+            recognizedTextInfo = ""
         }
     }
 
@@ -595,12 +562,12 @@ fun TaskSolverScreen() {
                             color = Color(0xFF1E2124),
                             lineHeight = 20.sp
                         )
-                        if (rawRecognizedText.isNotEmpty()) {
+                        if (recognizedTextInfo.isNotEmpty()) {
                             Spacer(modifier = Modifier.height(10.dp))
                             Divider()
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "Распознанный текст:\n$rawRecognizedText",
+                                text = "Текст с фото:\n$recognizedTextInfo",
                                 fontSize = 11.sp,
                                 color = Color.Gray
                             )
@@ -626,18 +593,37 @@ fun TaskSolverScreen() {
                                 }
                             }
 
+                            // 1. Оптическое считывание текста с картинки
                             stepIndex = 0
-                            val recognized = runActualOCR(recognizer, capturedImage!!)
-                            rawRecognizedText = recognized
-                            delay(400L)
+                            val ocrText = runActualOCR(recognizer, capturedImage!!)
+                            recognizedTextInfo = ocrText
 
+                            // 2. Генерация решения реальной нейросетью на процессоре
                             stepIndex = 1
-                            val solution = solveRealTask(recognized)
-                            delay(500L)
-
-                            stepIndex = 2
-                            delay(300L)
-                            solutionText = solution
+                            if (ocrText.isEmpty()) {
+                                solutionText = "❌ Текст на снимке не найден. Сфотографируйте задание чётче."
+                            } else {
+                                stepIndex = 2
+                                val aiResponse = withContext(Dispatchers.IO) {
+                                    try {
+                                        if (llmEngine != null) {
+                                            val prompt = """
+                                                Ты помощник по учебе. Выполни задание, которое написано на фото:
+                                                ---
+                                                $ocrText
+                                                ---
+                                                Дай понятный, полезный и точный ответ на русском языке.
+                                            """.trimIndent()
+                                            llmEngine?.generateResponse(prompt) ?: "Ошибка инференса модели."
+                                        } else {
+                                            "Модель ещё загружается в оперативную память. Подождите пару секунд и повторите."
+                                        }
+                                    } catch (e: Exception) {
+                                        "Ошибка выполнения нейросетью: ${e.localizedMessage}"
+                                    }
+                                }
+                                solutionText = aiResponse
+                            }
 
                             isProcessing = false
                             timerJob.cancel()
@@ -654,6 +640,7 @@ fun TaskSolverScreen() {
                 Text("Отправить задание", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
         } else {
+            // Реальный счётчик времени работы нейросети
             Box(
                 modifier = Modifier.size(96.dp),
                 contentAlignment = Alignment.Center
@@ -682,7 +669,7 @@ fun TaskSolverScreen() {
             )
 
             Text(
-                text = "Анализ изображения на процессоре...",
+                text = "Нейросеть генерирует ответ на процессоре...",
                 fontSize = 13.sp,
                 color = Color(0xFF757575)
             )
@@ -701,13 +688,13 @@ fun TaskSolverScreen() {
                 )
                 AnimStepRow(
                     index = 2,
-                    text = "Математический анализ условий",
+                    text = "Анализ условий нейросетью",
                     isCompleted = stepIndex >= 2,
                     isActive = stepIndex == 1
                 )
                 AnimStepRow(
                     index = 3,
-                    text = "Генерация точного ответа",
+                    text = "Генерация ответа",
                     isCompleted = false,
                     isActive = stepIndex == 2
                 )
@@ -740,93 +727,6 @@ suspend fun runActualOCR(recognizer: com.google.mlkit.vision.text.TextRecognizer
                 continuation.resume("")
             }
     }
-}
-
-fun solveRealTask(ocrText: String): String {
-    if (ocrText.isEmpty()) {
-        return "❌ На фото не найден текст или условие задачи.\nПопробуйте сфотографировать страницу ближе и чётче."
-    }
-
-    val cleanText = ocrText.lowercase()
-
-    val m = extractValue(cleanText, listOf("m=", "m =", "m:", "масса"))
-    val s = extractValue(cleanText, listOf("s=", "s =", "s:", "площадь"))
-    val g = extractValue(cleanText, listOf("g=", "g =", "g:")) ?: 10.0
-    val v = extractValue(cleanText, listOf("v=", "v =", "v:", "скорость"))
-    val t = extractValue(cleanText, listOf("t=", "t =", "t:", "время"))
-
-    if (cleanText.contains("p") || (m != null && s != null)) {
-        val mass = m ?: 1420.0
-        val area = s ?: 900.0
-        val force = mass * g
-        val areaInM2 = if (area > 10.0) area / 10000.0 else area
-        val pressure = force / areaInM2
-
-        return """
-            ✅ Распознана задача по физике (Давление):
-            
-            Дано:
-            m = $mass кг
-            S = $area см² = $areaInM2 м²
-            g = $g Н/кг
-            Найти: p
-            
-            Решение:
-            p = F / S
-            F = m · g = $mass · $g = $force Н
-            p = $force / $areaInM2 ≈ ${"%.2f".format(pressure)} Па
-            
-            Ответ: p ≈ ${"%.2f".format(pressure)} Па
-        """.trimIndent()
-    }
-
-    if (v != null && t != null) {
-        val distance = v * t
-        return """
-            ✅ Распознана задача на движение:
-            
-            Дано:
-            v = $v м/с
-            t = $t с
-            Найти: S
-            
-            Решение:
-            S = v · t = $v · $t = $distance м
-            
-            Ответ: S = $distance м
-        """.trimIndent()
-    }
-
-    val simpleMathRegex = Regex("""(\d+(\.\d+)?)\s*([\+\-\*\/])\s*(\d+(\.\d+)?)""")
-    val match = simpleMathRegex.find(cleanText)
-    if (match != null) {
-        val n1 = match.groupValues[1].toDoubleOrNull() ?: 0.0
-        val op = match.groupValues[3]
-        val n2 = match.groupValues[4].toDoubleOrNull() ?: 0.0
-        val res = when (op) {
-            "+" -> n1 + n2
-            "-" -> n1 - n2
-            "*" -> n1 * n2
-            "/" -> if (n2 != 0.0) n1 / n2 else "Деление на 0"
-            else -> 0.0
-        }
-        return "✅ Вычислено выражение:\n$n1 $op $n2 = $res"
-    }
-
-    return "Распознан текст:\n\n\"$ocrText\"\n\nКонкретная формула или переменные (m, S, v, t) не определены. Проверьте условия задачи."
-}
-
-fun extractValue(text: String, keys: List<String>): Double? {
-    for (k in keys) {
-        val index = text.indexOf(k)
-        if (index != -1) {
-            val sub = text.substring(index + k.length).trim()
-            val numStr = sub.takeWhile { it.isDigit() || it == '.' || it == ',' }.replace(',', '.')
-            val parsed = numStr.toDoubleOrNull()
-            if (parsed != null) return parsed
-        }
-    }
-    return null
 }
 
 @Composable
@@ -901,54 +801,25 @@ fun Modifier.drawDottedBorder(color: Color, strokeWidth: Dp, cornerRadius: Dp) =
     }
 )
 
-// Скачивание файлов с обходом защиты редиректов
-suspend fun downloadFileSafely(
+suspend fun downloadFileWithProgress(
     urlStr: String,
     dest: File,
     onProgress: (Long, Long) -> Unit,
+    onDone: () -> Unit,
     onError: (String) -> Unit
-): Boolean = withContext(Dispatchers.IO) {
+) = withContext(Dispatchers.IO) {
     try {
-        var currentUrl = urlStr
-        var connection: HttpURLConnection
-        var redirectCount = 0
+        val url = URL(urlStr)
+        val conn = url.openConnection() as HttpURLConnection
+        conn.connectTimeout = 30000
+        conn.readTimeout = 30000
+        conn.connect()
 
-        while (true) {
-            val url = URL(currentUrl)
-            connection = url.openConnection() as HttpURLConnection
-            connection.instanceFollowRedirects = false
-            connection.connectTimeout = 30000
-            connection.readTimeout = 30000
-            connection.setRequestProperty(
-                "User-Agent",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-            )
-            connection.setRequestProperty("Accept", "*/*")
-            connection.connect()
-
-            val status = connection.responseCode
-            if (status in listOf(HttpURLConnection.HTTP_MOVED_PERM, HttpURLConnection.HTTP_MOVED_TEMP, 307, 308, 303)) {
-                val newUrl = connection.getHeaderField("Location") ?: return@withContext false
-                connection.disconnect()
-                currentUrl = newUrl
-                redirectCount++
-                if (redirectCount > 10) {
-                    withContext(Dispatchers.Main) { onError("Превышен лимит перенаправлений") }
-                    return@withContext false
-                }
-            } else if (status in 200..299) {
-                break
-            } else {
-                withContext(Dispatchers.Main) { onError("Ошибка сервера: $status") }
-                return@withContext false
-            }
-        }
-
-        val totalLength = connection.contentLengthLong
+        val totalLength = conn.contentLengthLong
         val buffer = ByteArray(64 * 1024)
         var totalRead: Long = 0
 
-        connection.inputStream.use { input ->
+        conn.inputStream.use { input ->
             FileOutputStream(dest).use { output ->
                 var read: Int
                 while (input.read(buffer).also { read = it } != -1) {
@@ -961,9 +832,8 @@ suspend fun downloadFileSafely(
                 output.flush()
             }
         }
-        true
+        withContext(Dispatchers.Main) { onDone() }
     } catch (e: Exception) {
-        withContext(Dispatchers.Main) { onError(e.message ?: "Сбой соединения") }
-        false
+        withContext(Dispatchers.Main) { onError(e.message ?: "Ошибка сети") }
     }
 }
