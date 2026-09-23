@@ -59,7 +59,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.activity:activity-compose:1.8.2")
 
-    // Jetpack Compose BOM & UI
+    // Jetpack Compose
     implementation(platform("androidx.compose:compose-bom:2024.04.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
@@ -67,12 +67,13 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
 
-    // Coil для отображения фото
+    // Загрузка и показ изображений
     implementation("io.coil-kt:coil-compose:2.6.0")
 
-    // Оффлайн OCR для анализа текста/формул на фото
+    // Мультиязычный оффлайн OCR (Русский + Английский + Латиница)
     implementation("com.google.mlkit:text-recognition:16.0.0")
 
-    // Корутины
+    // Движок локальной нейросети на процессоре
+    implementation("com.google.mediapipe:tasks-genai:0.10.14")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }
