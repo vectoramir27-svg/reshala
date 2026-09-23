@@ -8,15 +8,15 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,6 +26,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -33,7 +34,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -93,7 +93,7 @@ fun SetupScreen(modelFile: File, onReady: () -> Unit) {
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = Icons.Default.CloudDownload,
+                imageVector = Icons.Default.Refresh,
                 contentDescription = null,
                 tint = Color(0xFF3D5AFE),
                 modifier = Modifier.size(38.dp)
@@ -112,7 +112,7 @@ fun SetupScreen(modelFile: File, onReady: () -> Unit) {
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "Для работы без интернета требуется загрузить локальные файлы (~1.9 ГБ)",
+            text = "Для оффлайн работы необходимо установить локальную модель (~1.9 ГБ)",
             fontSize = 14.sp,
             color = Color(0xFF757575),
             textAlign = TextAlign.Center
@@ -213,12 +213,7 @@ fun SolverMainScreen() {
                 .background(Color(0xFFE8EAF6)),
             contentAlignment = Alignment.Center
         ) {
-            Icon(
-                imageVector = Icons.Default.CameraAlt,
-                contentDescription = null,
-                tint = Color(0xFF3D5AFE),
-                modifier = Modifier.size(34.dp)
-            )
+            Text("📷", fontSize = 28.sp)
         }
 
         Spacer(modifier = Modifier.height(14.dp))
@@ -261,8 +256,8 @@ fun SolverMainScreen() {
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        AsyncImage(
-                            model = capturedImage,
+                        Image(
+                            bitmap = capturedImage!!.asImageBitmap(),
                             contentDescription = "Preview",
                             modifier = Modifier
                                 .weight(1f)
