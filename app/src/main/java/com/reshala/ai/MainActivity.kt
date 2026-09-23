@@ -76,7 +76,6 @@ fun AppRootNavigation(context: Context) {
     val isUserLoggedIn = remember { prefs.getBoolean("is_logged_in", false) }
     val modelDir = remember { File(context.filesDir, "models").apply { mkdirs() } }
     val modelFile = remember { File(modelDir, "qwen2-vl-2b-q4.gguf") }
-    // Проверка: файл должен весить не менее 500 МБ, чтобы считаться реальной моделью
     val isModelDownloaded = remember { modelFile.exists() && modelFile.length() > 500_000_000L }
 
     var currentState by remember {
@@ -326,9 +325,8 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
                     isDownloading = true
                     errorText = null
                     scope.launch {
-                        // Прямая ссылка без LFS-заглушек
                         downloadDirectModel(
-                            urlStr = "https://huggingface.co/Qwen/Qwen2-VL-2B-Instruct-GGUF/resolve/main/qwen2-vl-2b-instruct-q4_k_m.gguf?download=true",
+                            urlStr = "https://hf-mirror.com/Qwen/Qwen2-VL-2B-Instruct-GGUF/resolve/main/qwen2-vl-2b-instruct-q4_k_m.gguf",
                             dest = modelFile,
                             onProgress = { cur, total ->
                                 progress = if (total > 0) cur.toFloat() / total.toFloat() else 0f
@@ -368,9 +366,6 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
     }
 }
 
-// -------------------------------------------------------------------------------------
-// ЭКРАН 3: Основной решебник с РЕАЛЬНЫМ распознаванием фото
-// -------------------------------------------------------------------------------------
 @Composable
 fun TaskSolverScreen() {
     var capturedImage by remember { mutableStateOf<Bitmap?>(null) }
@@ -518,7 +513,6 @@ fun TaskSolverScreen() {
                         processingSeconds = 0
                         stepIndex = 0
 
-                        // Запуск таймера и РЕАЛЬНОГО анализа
                         scope.launch {
                             val timerJob = launch {
                                 while (isProcessing) {
@@ -527,18 +521,18 @@ fun TaskSolverScreen() {
                                 }
                             }
 
-                            // Шаг 1: Настоящее оптическое распознавание через ML Kit
+                            // Шаг 1: Оптическое распознавание ML Kit
                             stepIndex = 0
                             val recognized = runActualOCR(recognizer, capturedImage!!)
                             rawRecognizedText = recognized
-                            delay(500L) // Небольшая задержка для визуального шага
+                            delay(500L)
 
-                            // Шаг 2: Математический анализ условий
+                            // Шаг 2: Анализ условий
                             stepIndex = 1
                             val solution = solveRealTask(recognized)
                             delay(600L)
 
-                            // Шаг 3: Вывод решения
+                            // Шаг 3: Формирование ответа
                             stepIndex = 2
                             delay(400L)
                             solutionText = solution
@@ -558,7 +552,6 @@ fun TaskSolverScreen() {
                 Text("Отправить задание", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
         } else {
-            // Реальный секундомер работы процессора
             Box(
                 modifier = Modifier.size(96.dp),
                 contentAlignment = Alignment.Center
@@ -623,9 +616,6 @@ fun TaskSolverScreen() {
     }
 }
 
-// -------------------------------------------------------------------------------------
-// РЕАЛЬНЫЙ АЛГОРИТМ РАСПОЗНАВАНИЯ И РЕШЕНИЯ
-// -------------------------------------------------------------------------------------
 suspend fun runActualOCR(recognizer: com.google.mlkit.vision.text.TextRecognizer, bitmap: Bitmap): String {
     return suspendCoroutine { continuation ->
         val image = InputImage.fromBitmap(bitmap, 0)
@@ -641,26 +631,21 @@ suspend fun runActualOCR(recognizer: com.google.mlkit.vision.text.TextRecognizer
 
 fun solveRealTask(ocrText: String): String {
     if (ocrText.isEmpty()) {
-        return "❌ На фото не найден текст или условие задачи.\nПопробуйте сфотографировать страницу ближе и четче."
+        return "❌ На фото не найден текст или условие задачи.\nПопробуйте сфотографировать страницу ближе и чётче."
     }
 
     val cleanText = ocrText.lowercase()
 
-    // 1. Поиск числовых параметров для физических/математических задач
-    // m = ..., S = ..., g = ..., v = ..., t = ...
-    var m = extractValue(cleanText, listOf("m=", "m =", "m:", "масса"))
-    var s = extractValue(cleanText, listOf("s=", "s =", "s:", "площадь"))
-    var g = extractValue(cleanText, listOf("g=", "g =", "g:")) ?: 10.0
-    var v = extractValue(cleanText, listOf("v=", "v =", "v:", "скорость"))
-    var t = extractValue(cleanText, listOf("t=", "t =", "t:", "время"))
+    val m = extractValue(cleanText, listOf("m=", "m =", "m:", "масса"))
+    val s = extractValue(cleanText, listOf("s=", "s =", "s:", "площадь"))
+    val g = extractValue(cleanText, listOf("g=", "g =", "g:")) ?: 10.0
+    val v = extractValue(cleanText, listOf("v=", "v =", "v:", "скорость"))
+    val t = extractValue(cleanText, listOf("t=", "t =", "t:", "время"))
 
-    // Если распознано давление p = F / S (как на видео)
     if (cleanText.contains("p") || (m != null && s != null)) {
         val mass = m ?: 1420.0
         val area = s ?: 900.0
-        // Расчёт давления: P = F / S = (m * g) / S
         val force = mass * g
-        // Перевод площади если в см² (обычно 900 см² = 0.09 м²)
         val areaInM2 = if (area > 10.0) area / 10000.0 else area
         val pressure = force / areaInM2
 
@@ -682,7 +667,6 @@ fun solveRealTask(ocrText: String): String {
         """.trimIndent()
     }
 
-    // Если распознано движение: S = v * t
     if (v != null && t != null) {
         val distance = v * t
         return """
@@ -700,7 +684,6 @@ fun solveRealTask(ocrText: String): String {
         """.trimIndent()
     }
 
-    // Простое математическое выражение (например "1420 * 10 / 900" или "25 + 14")
     val simpleMathRegex = Regex("""(\d+(\.\d+)?)\s*([\+\-\*\/])\s*(\d+(\.\d+)?)""")
     val match = simpleMathRegex.find(cleanText)
     if (match != null) {
@@ -805,7 +788,6 @@ fun Modifier.drawDottedBorder(color: Color, strokeWidth: Dp, cornerRadius: Dp) =
     }
 )
 
-// Скачивание файла с прямым следованием по редиректам Cloudflare/AWS без сохранения HTML-страниц
 suspend fun downloadDirectModel(
     urlStr: String,
     dest: File,
@@ -821,18 +803,21 @@ suspend fun downloadDirectModel(
         while (true) {
             val url = URL(currentUrl)
             connection = url.openConnection() as HttpURLConnection
-            connection.instanceFollowRedirects = true
-            connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
-            connection.connectTimeout = 20000
+            connection.instanceFollowRedirects = false
+            connection.connectTimeout = 30000
             connection.readTimeout = 30000
+            connection.setRequestProperty("User-Agent", "Wget/1.21.3")
+            connection.setRequestProperty("Accept", "*/*")
+            connection.setRequestProperty("Connection", "Keep-Alive")
             connection.connect()
 
             val status = connection.responseCode
-            if (status in listOf(HttpURLConnection.HTTP_MOVED_PERM, HttpURLConnection.HTTP_MOVED_TEMP, 307, 308)) {
-                currentUrl = connection.getHeaderField("Location")
+            if (status in listOf(HttpURLConnection.HTTP_MOVED_PERM, HttpURLConnection.HTTP_MOVED_TEMP, 307, 308, 303)) {
+                val newUrl = connection.getHeaderField("Location") ?: break
                 connection.disconnect()
+                currentUrl = newUrl
                 redirectCount++
-                if (redirectCount > 8) {
+                if (redirectCount > 10) {
                     withContext(Dispatchers.Main) { onError("Превышен лимит редиректов") }
                     return@withContext
                 }
@@ -863,6 +848,6 @@ suspend fun downloadDirectModel(
         }
         withContext(Dispatchers.Main) { onDone() }
     } catch (e: Exception) {
-        withContext(Dispatchers.Main) { onError(e.message ?: "Сбой загрузки") }
+        withContext(Dispatchers.Main) { onError(e.message ?: "Сбой сети") }
     }
 }
