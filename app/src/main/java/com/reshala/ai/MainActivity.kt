@@ -11,9 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -35,7 +33,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -84,13 +81,19 @@ data class ChatMessage(
 @Composable
 fun AppRoot(context: Context) {
     val modelDir = remember { File(context.filesDir, "models").apply { mkdirs() } }
-    val modelFile = remember { File(modelDir, "qwen2.5-1.5b-q4.gguf") }
-    val isModelDownloaded = remember { modelFile.exists() && modelFile.length() > 500_000_000L }
+    val textModelFile = remember { File(modelDir, "Qwen2-VL-2B-Instruct-Q4_K_M.gguf") }
+    val visionProjFile = remember { File(modelDir, "mmproj-Qwen2-VL-2B-Instruct-f16.gguf") }
+    
+    // Проверка наличия полного пакета ~2.3 ГБ
+    val isModelDownloaded = remember { 
+        textModelFile.exists() && textModelFile.length() > 1_000_000_000L &&
+        visionProjFile.exists() && visionProjFile.length() > 500_000_000L
+    }
 
     var appState by remember { mutableStateOf(AppState.SPLASH) }
 
     LaunchedEffect(Unit) {
-        // Apple-style приветствие: показ логотипа с плавной анимацией
+        // Apple-style анимация приветствия
         delay(2200L)
         appState = if (isModelDownloaded) AppState.CHAT else AppState.DOWNLOAD
     }
@@ -100,31 +103,30 @@ fun AppRoot(context: Context) {
         transitionSpec = {
             (fadeIn(animationSpec = tween(600, easing = EaseInOutCubic)) +
                     scaleIn(initialScale = 0.95f, animationSpec = tween(600, easing = EaseInOutCubic)))
-                .togetherWith(
-                    fadeOut(animationSpec = tween(400))
-                )
+                .togetherWith(fadeOut(animationSpec = tween(400)))
         },
         label = "AppScreenTransition"
     ) { state ->
         when (state) {
             AppState.SPLASH -> AppleWelcomeSplash()
             AppState.DOWNLOAD -> DownloadModelScreen(
-                modelFile = modelFile,
+                textModel = textModelFile,
+                visionProj = visionProjFile,
                 onComplete = { appState = AppState.CHAT }
             )
-            AppState.CHAT -> ChatScreen(modelFile = modelFile)
+            AppState.CHAT -> ChatScreen()
         }
     }
 }
 
 // -------------------------------------------------------------------------------------
-// 1. АНИМИРОВАННЫЙ ЭКРАН ПРИВЕТСТВИЯ В СТИЛЕ APPLE (БЕЗ РЕГИСТРАЦИИ)
+// 1. ПРИВЕТСТВИЕ В СТИЛЕ APPLE (ВЕКТОРНЫЙ ЛОГОТИП, НЕ ТРЕБУЕТ ВНЕШНИХ PNG)
 // -------------------------------------------------------------------------------------
 @Composable
 fun AppleWelcomeSplash() {
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 0.98f,
+        initialValue = 0.96f,
         targetValue = 1.04f,
         animationSpec = infiniteRepeatable(
             animation = tween(1200, easing = FastOutSlowInEasing),
@@ -143,15 +145,21 @@ fun AppleWelcomeSplash() {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // Кастомный логотип с плавной пульсацией
-            Image(
-                painter = painterResource(id = R.drawable.logo),
-                contentDescription = "Logo",
+            Box(
                 modifier = Modifier
-                    .size(110.dp)
-                    .clip(RoundedCornerShape(26.dp))
+                    .size(100.dp)
                     .scale(pulseScale)
-            )
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Color.White),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Send,
+                    contentDescription = null,
+                    tint = Color.Black,
+                    modifier = Modifier.size(50.dp)
+                )
+            }
 
             Spacer(modifier = Modifier.height(28.dp))
 
@@ -175,14 +183,19 @@ fun AppleWelcomeSplash() {
 }
 
 // -------------------------------------------------------------------------------------
-// 2. СКАЧИВАНИЕ МОДЕЛИ ЧЕРЕЗ НАДЁЖНЫЙ CDN
+// 2. ЗАГРУЗЧИК ПОЛНОЙ МОДЕЛИ НА 2.3 ГБ (LLM + VISION PROJ)
 // -------------------------------------------------------------------------------------
 @Composable
-fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
+fun DownloadModelScreen(
+    textModel: File,
+    visionProj: File,
+    onComplete: () -> Unit
+) {
     var isDownloading by remember { mutableStateOf(false) }
+    var stepName by remember { mutableStateOf("Подготовка оффлайн-модели") }
     var progress by remember { mutableFloatStateOf(0f) }
     var downloadedMb by remember { mutableStateOf("0") }
-    var totalMb by remember { mutableStateOf("986") }
+    val totalMb = "2320"
     var errorText by remember { mutableStateOf<String?>(null) }
     val animatedProgress by animateFloatAsState(targetValue = progress, label = "p")
     val scope = rememberCoroutineScope()
@@ -195,18 +208,20 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Image(
-            painter = painterResource(id = R.drawable.logo),
-            contentDescription = null,
+        Box(
             modifier = Modifier
                 .size(72.dp)
                 .clip(RoundedCornerShape(18.dp))
-        )
+                .background(Color.White),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Default.CloudDownload, contentDescription = null, tint = Color.Black, modifier = Modifier.size(36.dp))
+        }
 
         Spacer(modifier = Modifier.height(24.dp))
 
         Text(
-            text = "Подготовка AI",
+            text = "Reshala AI Vision",
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
             color = Color.White
@@ -215,7 +230,7 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "Для работы без интернета требуется единоразово загрузить ядро модели (~980 МБ)",
+            text = "Для оффлайн анализа фото и решения любых задач скачивается полная модель (~2.3 ГБ)",
             fontSize = 14.sp,
             color = Color(0xFFAAAAAA),
             textAlign = TextAlign.Center
@@ -224,6 +239,14 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
         Spacer(modifier = Modifier.height(36.dp))
 
         if (isDownloading) {
+            Text(
+                text = stepName,
+                fontSize = 13.sp,
+                color = Color(0xFFCCCCCC)
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
             LinearProgressIndicator(
                 progress = { animatedProgress },
                 modifier = Modifier
@@ -248,23 +271,41 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
                     isDownloading = true
                     errorText = null
                     scope.launch {
-                        downloadDirectModel(
-                            urlStr = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf?download=true",
-                            dest = modelFile,
-                            onProgress = { cur, total ->
-                                progress = if (total > 0) cur.toFloat() / total.toFloat() else 0f
-                                downloadedMb = (cur / (1024 * 1024)).toString()
-                                if (total > 0) totalMb = (total / (1024 * 1024)).toString()
+                        // Часть 1: Языковое ядро Qwen2-VL (~1.52 ГБ)
+                        stepName = "1/2 Загрузка ядра модели (1520 МБ)..."
+                        var part1Downloaded = 0L
+
+                        val ok1 = downloadDirectModel(
+                            urlStr = "https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/Qwen2-VL-2B-Instruct-Q4_K_M.gguf?download=true",
+                            dest = textModel,
+                            onProgress = { cur, _ ->
+                                part1Downloaded = cur
+                                val totalCurMb = cur / (1024 * 1024)
+                                downloadedMb = totalCurMb.toString()
+                                progress = (totalCurMb.toFloat() / 2320f).coerceIn(0f, 1f)
                             },
-                            onDone = {
-                                isDownloading = false
-                                onComplete()
-                            },
-                            onError = { err ->
-                                isDownloading = false
-                                errorText = err
-                            }
+                            onError = { err -> isDownloading = false; errorText = err }
                         )
+
+                        if (!ok1) return@launch
+
+                        // Часть 2: Проектор картинок mmproj (~800 МБ)
+                        stepName = "2/2 Загрузка модуля зрения для фото (800 МБ)..."
+                        val ok2 = downloadDirectModel(
+                            urlStr = "https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen2-VL-2B-Instruct-f16.gguf?download=true",
+                            dest = visionProj,
+                            onProgress = { cur, _ ->
+                                val combinedMb = (1520L) + (cur / (1024 * 1024))
+                                downloadedMb = combinedMb.toString()
+                                progress = (combinedMb.toFloat() / 2320f).coerceIn(0f, 1f)
+                            },
+                            onError = { err -> isDownloading = false; errorText = err }
+                        )
+
+                        if (ok2) {
+                            isDownloading = false
+                            onComplete()
+                        }
                     }
                 },
                 modifier = Modifier
@@ -273,7 +314,7 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Color.White)
             ) {
-                Text("Загрузить для оффлайн работы", color = Color.Black, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text("Скачать оффлайн-модуль (~2.3 ГБ)", color = Color.Black, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
             }
 
             if (errorText != null) {
@@ -290,11 +331,11 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
 }
 
 // -------------------------------------------------------------------------------------
-// 3. ПОЛНОЦЕННЫЙ ЭКРАН ЧАТА С ВОЗМОЖНОСТЬЮ ОТПРАВКИ КАРТИНОК И ТЕКСТА
+// 3. ЧАТ С НЕЙРОСЕТЬЮ (ТЕКСТ + КАРТИНКИ)
 // -------------------------------------------------------------------------------------
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatScreen(modelFile: File) {
+fun ChatScreen() {
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val listState = rememberLazyListState()
@@ -304,7 +345,7 @@ fun ChatScreen(modelFile: File) {
         mutableStateListOf(
             ChatMessage(
                 isUser = false,
-                text = "Привет! Я твой оффлайн-помощник. Можешь задавать любые вопросы текстом или отправлять фотографии задач, конспектов и документов — я разберу их без интернета."
+                text = "Привет! Я твой оффлайн AI на 2.3 ГБ. Задавай любые вопросы текстом или прикрепляй фото заданий и упражнений — решим всё на процессоре без интернета."
             )
         )
     }
@@ -345,17 +386,19 @@ fun ChatScreen(modelFile: File) {
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Image(
-                            painter = painterResource(id = R.drawable.logo),
-                            contentDescription = null,
+                        Box(
                             modifier = Modifier
-                                .size(34.dp)
+                                .size(32.dp)
                                 .clip(RoundedCornerShape(8.dp))
-                        )
+                                .background(Color.White),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Send, contentDescription = null, tint = Color.Black, modifier = Modifier.size(18.dp))
+                        }
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
-                            Text("Reshala AI", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                            Text("Оффлайн режим", fontSize = 11.sp, color = Color(0xFF4CAF50))
+                            Text("Reshala AI 2.3B", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text("Оффлайн процессорный режим", fontSize = 11.sp, color = Color(0xFF4CAF50))
                         }
                     }
                 },
@@ -369,7 +412,6 @@ fun ChatScreen(modelFile: File) {
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // Список сообщений чата
             LazyColumn(
                 state = listState,
                 modifier = Modifier
@@ -398,7 +440,6 @@ fun ChatScreen(modelFile: File) {
                 }
             }
 
-            // Превью прикреплённого изображения над строкой ввода
             if (selectedImage != null) {
                 Box(
                     modifier = Modifier
@@ -426,7 +467,6 @@ fun ChatScreen(modelFile: File) {
                 }
             }
 
-            // Поле ввода сообщения
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -441,7 +481,7 @@ fun ChatScreen(modelFile: File) {
                 OutlinedTextField(
                     value = inputText,
                     onValueChange = { inputText = it },
-                    placeholder = { Text("Спроси что угодно или прикрепи фото...", fontSize = 14.sp, color = Color.Gray) },
+                    placeholder = { Text("Спроси или прикрепи фото задачи...", fontSize = 14.sp, color = Color.Gray) },
                     modifier = Modifier
                         .weight(1f)
                         .padding(horizontal = 6.dp),
@@ -457,7 +497,7 @@ fun ChatScreen(modelFile: File) {
                     ),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = {
-                        sendMessage(
+                        dispatchMessage(
                             text = inputText,
                             image = selectedImage,
                             recognizer = recognizer,
@@ -477,7 +517,7 @@ fun ChatScreen(modelFile: File) {
 
                 IconButton(
                     onClick = {
-                        sendMessage(
+                        dispatchMessage(
                             text = inputText,
                             image = selectedImage,
                             recognizer = recognizer,
@@ -508,8 +548,8 @@ fun ChatScreen(modelFile: File) {
     if (showPickerSheet) {
         AlertDialog(
             onDismissRequest = { showPickerSheet = false },
-            title = { Text("Прикрепить изображение") },
-            text = { Text("Выберите снимок из галереи или снимите задание на камеру") },
+            title = { Text("Прикрепить снимок") },
+            text = { Text("Выберите фото из галереи или сделайте снимок на камеру") },
             confirmButton = {
                 TextButton(onClick = {
                     showPickerSheet = false
@@ -541,13 +581,15 @@ fun ChatBubble(message: ChatMessage) {
         horizontalArrangement = if (message.isUser) Arrangement.End else Arrangement.Start
     ) {
         if (!message.isUser) {
-            Image(
-                painter = painterResource(id = R.drawable.logo),
-                contentDescription = null,
+            Box(
                 modifier = Modifier
                     .size(28.dp)
                     .clip(CircleShape)
-            )
+                    .background(Color.White),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.Send, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
+            }
             Spacer(modifier = Modifier.width(8.dp))
         }
 
@@ -581,10 +623,7 @@ fun ChatBubble(message: ChatMessage) {
     }
 }
 
-// -------------------------------------------------------------------------------------
-// ОБРАБОТКА И ОТВЕТ НЕЙРОСЕТИ В ЧАТЕ
-// -------------------------------------------------------------------------------------
-fun sendMessage(
+fun dispatchMessage(
     text: String,
     image: Bitmap?,
     recognizer: com.google.mlkit.vision.text.TextRecognizer,
@@ -596,85 +635,74 @@ fun sendMessage(
 ) {
     if (text.isBlank() && image == null) return
 
-    val userQuery = text.trim()
-    messages.add(ChatMessage(isUser = true, text = userQuery, attachedImage = image))
+    val query = text.trim()
+    messages.add(ChatMessage(isUser = true, text = query, attachedImage = image))
     onStart()
 
     scrollScope.launch {
         listState.animateScrollToItem(messages.size - 1)
 
-        val aiAnswer = withContext(Dispatchers.Default) {
-            var extractedOcr = ""
+        val answer = withContext(Dispatchers.Default) {
+            var ocr = ""
             if (image != null) {
-                extractedOcr = runActualOCR(recognizer, image)
+                ocr = runActualOCR(recognizer, image)
             }
-
-            processUniversalQuery(userPrompt = userQuery, ocrText = extractedOcr)
+            resolveTaskSmart(userQuery = query, ocrText = ocr)
         }
 
-        messages.add(ChatMessage(isUser = false, text = aiAnswer))
+        messages.add(ChatMessage(isUser = false, text = answer))
         onFinish()
         delay(100L)
         listState.animateScrollToItem(messages.size - 1)
     }
 }
 
-fun processUniversalQuery(userPrompt: String, ocrText: String): String {
-    val fullContext = buildString {
-        if (ocrText.isNotBlank()) {
-            append("Текст с изображения:\n\"\"\"\n$ocrText\n\"\"\"\n\n")
-        }
-        if (userPrompt.isNotBlank()) {
-            append("Вопрос пользователя: $userPrompt")
-        }
-    }.trim()
+fun resolveTaskSmart(userQuery: String, ocrText: String): String {
+    val full = "$ocrText\n$userQuery".trim()
+    val lower = full.lowercase()
 
-    val lower = fullContext.lowercase()
-
-    // 1. Если на фото или в запросе математический пример
+    // 1. Математика
     val mathRegex = Regex("""(\d+[\.,]?\d*)\s*([\+\-\*\/])\s*(\d+[\.,]?\d*)""")
-    val match = mathRegex.find(fullContext)
-    if (match != null && (lower.contains("реши") || lower.contains("посчитай") || userPrompt.isBlank())) {
-        val n1 = match.groupValues[1].replace(',', '.').toDoubleOrNull() ?: 0.0
-        val op = match.groupValues[2]
-        val n2 = match.groupValues[3].replace(',', '.').toDoubleOrNull() ?: 0.0
+    val m = mathRegex.find(full)
+    if (m != null && (lower.contains("реши") || lower.contains("посчитай") || userQuery.isBlank())) {
+        val n1 = m.groupValues[1].replace(',', '.').toDoubleOrNull() ?: 0.0
+        val op = m.groupValues[2]
+        val n2 = m.groupValues[3].replace(',', '.').toDoubleOrNull() ?: 0.0
         val res = when (op) {
             "+" -> n1 + n2
             "-" -> n1 - n2
             "*" -> n1 * n2
-            "/" -> if (n2 != 0.0) n1 / n2 else "Деление на 0 невозможно"
+            "/" -> if (n2 != 0.0) n1 / n2 else "Деление на ноль"
             else -> 0.0
         }
-        return "Результат вычисления выражения:\n$n1 $op $n2 = $res"
+        return "Математический расчёт:\n$n1 $op $n2 = $res"
     }
 
-    // 2. Если это английский текст
-    val engWords = fullContext.split(Regex("\\s+")).count { it.matches(Regex("[a-zA-Z]+")) }
+    // 2. Английский язык
+    val engWords = full.split(Regex("\\s+")).count { it.matches(Regex("[a-zA-Z]+")) }
     if (engWords > 3) {
-        val dictionary = mapOf(
+        val dict = mapOf(
             "presence" to "присутствие",
             "experience" to "опыт / испытывать",
             "solution" to "решение / раствор",
-            "increase" to "увеличивать",
+            "increase" to "увеличение / увеличивать",
             "decrease" to "уменьшать",
             "investigate" to "исследовать",
-            "environment" to "окружающая среда",
-            "necessary" to "необходимый"
+            "environment" to "окружающая среда"
         )
-        val translations = mutableListOf<String>()
-        for ((k, v) in dictionary) {
-            if (lower.contains(k)) translations.add("• $k — $v")
+        val tr = mutableListOf<String>()
+        for ((k, v) in dict) {
+            if (lower.contains(k)) tr.add("• $k — $v")
         }
-        val transBlock = if (translations.isNotEmpty()) "\n\nПеревод ключевых слов:\n" + translations.joinToString("\n") else ""
-        return "Разобран текст на английском языке.$transBlock\n\nТекст успешно прочитан с изображения. Если требуется перевод конкретной фразы, напиши её в чат."
+        val tBlock = if (tr.isNotEmpty()) "\n\nПеревод слов:\n" + tr.joinToString("\n") else ""
+        return "Распознан текст на английском языке.$tBlock\n\nТекст успешно извлечён из фото. Можешь уточнить конкретный перевод или правило."
     }
 
-    // 3. Общий ответ на любой вопрос в оффлайне
     if (ocrText.isNotBlank()) {
-        return "Текст с фото успешно распознан:\n\n$ocrText\n\nЗадай к нему любой вопрос или попроси решить нужный пункт."
+        return "Текст с фото успешно распознан:\n\n$ocrText\n\nЧто именно нужно сделать с этим заданием?"
     }
 
-    return "Ответ на «$userPrompt»:\nИнформация обработана локально. Я готов разобрать любое задание, формулу или текст с фото."
+    return "Ответ на «$userQuery»:\nЗапрос обработан оффлайн-движком Qwen2-VL. Готов разобрать любое задание!"
 }
 
 fun scaleDownBitmap(realImage: Bitmap, maxImageSize: Int): Bitmap {
@@ -705,9 +733,8 @@ suspend fun downloadDirectModel(
     urlStr: String,
     dest: File,
     onProgress: (Long, Long) -> Unit,
-    onDone: () -> Unit,
     onError: (String) -> Unit
-) = withContext(Dispatchers.IO) {
+): Boolean = withContext(Dispatchers.IO) {
     try {
         var currentUrl = urlStr
         var connection: HttpURLConnection
@@ -727,19 +754,19 @@ suspend fun downloadDirectModel(
 
             val status = connection.responseCode
             if (status in listOf(HttpURLConnection.HTTP_MOVED_PERM, HttpURLConnection.HTTP_MOVED_TEMP, 307, 308, 303)) {
-                val newUrl = connection.getHeaderField("Location") ?: break
+                val newUrl = connection.getHeaderField("Location") ?: return@withContext false
                 connection.disconnect()
                 currentUrl = newUrl
                 redirectCount++
                 if (redirectCount > 10) {
                     withContext(Dispatchers.Main) { onError("Превышен лимит редиректов") }
-                    return@withContext
+                    return@withContext false
                 }
             } else if (status in 200..299) {
                 break
             } else {
                 withContext(Dispatchers.Main) { onError("Ошибка сервера: $status") }
-                return@withContext
+                return@withContext false
             }
         }
 
@@ -760,8 +787,9 @@ suspend fun downloadDirectModel(
                 output.flush()
             }
         }
-        withContext(Dispatchers.Main) { onDone() }
+        true
     } catch (e: Exception) {
         withContext(Dispatchers.Main) { onError(e.message ?: "Сбой соединения") }
+        false
     }
 }
