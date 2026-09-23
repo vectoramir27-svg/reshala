@@ -13,6 +13,11 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        vectorDrawables {
+            useSupportLibrary = true
+        }
     }
 
     buildTypes {
@@ -41,16 +46,33 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.11"
     }
+
+    packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
 }
 
 dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.activity:activity-compose:1.8.2")
+
+    // Jetpack Compose BOM & UI
     implementation(platform("androidx.compose:compose-bom:2024.04.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.compose.material:material-icons-extended")
+
+    // Coil для отображения фото
+    implementation("io.coil-kt:coil-compose:2.6.0")
+
+    // Оффлайн OCR для анализа текста/формул на фото
+    implementation("com.google.mlkit:text-recognition:16.0.0")
+
+    // Корутины
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }
