@@ -79,14 +79,21 @@ fun AppRootNavigation(context: Context) {
     val prefs = remember { context.getSharedPreferences("reshala_prefs", Context.MODE_PRIVATE) }
     val isUserLoggedIn = remember { prefs.getBoolean("is_logged_in", false) }
     val modelDir = remember { File(context.filesDir, "models").apply { mkdirs() } }
-    val modelFile = remember { File(modelDir, "Qwen2-VL-2B-Instruct-Q4_K_M.gguf") }
-    val isModelDownloaded = remember { modelFile.exists() && modelFile.length() > 500_000_000L }
+    
+    // Два необходимых файла (LLM + Визуальный проектор для картинок)
+    val textModelFile = remember { File(modelDir, "Qwen2-VL-2B-Instruct-Q4_K_M.gguf") }
+    val visionProjFile = remember { File(modelDir, "mmproj-Qwen2-VL-2B-Instruct-Q8_0.gguf") }
+    
+    val isReady = remember { 
+        textModelFile.exists() && textModelFile.length() > 800_000_000L &&
+        visionProjFile.exists() && visionProjFile.length() > 500_000_000L
+    }
 
     var currentState by remember {
         mutableStateOf(
             when {
                 !isUserLoggedIn -> ScreenState.AUTH
-                !isModelDownloaded -> ScreenState.DOWNLOAD
+                !isReady -> ScreenState.DOWNLOAD
                 else -> ScreenState.MAIN_SOLVER
             }
         )
@@ -110,7 +117,7 @@ fun AppRootNavigation(context: Context) {
             ScreenState.AUTH -> AuthScreen(
                 onLoginSuccess = { user ->
                     prefs.edit().putBoolean("is_logged_in", true).putString("username", user).apply()
-                    currentState = if (modelFile.exists() && modelFile.length() > 500_000_000L) {
+                    currentState = if (textModelFile.exists() && visionProjFile.exists()) {
                         ScreenState.MAIN_SOLVER
                     } else {
                         ScreenState.DOWNLOAD
@@ -118,7 +125,8 @@ fun AppRootNavigation(context: Context) {
                 }
             )
             ScreenState.DOWNLOAD -> DownloadModelScreen(
-                modelFile = modelFile,
+                textModel = textModelFile,
+                visionProj = visionProjFile,
                 onComplete = {
                     currentState = ScreenState.MAIN_SOLVER
                 }
@@ -247,12 +255,20 @@ fun AuthScreen(onLoginSuccess: (String) -> Unit) {
     }
 }
 
+// -------------------------------------------------------------------------------------
+// СКАЧИВАНИЕ 2 ГБ: LLM (1.2 ГБ) + Визуальный модуль для картинок (710 МБ)
+// -------------------------------------------------------------------------------------
 @Composable
-fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
+fun DownloadModelScreen(
+    textModel: File,
+    visionProj: File,
+    onComplete: () -> Unit
+) {
     var isDownloading by remember { mutableStateOf(false) }
+    var currentStepName by remember { mutableStateOf("Подготовка оффлайн-модулей") }
     var progress by remember { mutableFloatStateOf(0f) }
     var downloadedMb by remember { mutableStateOf("0") }
-    var totalMb by remember { mutableStateOf("0") }
+    var totalMb by remember { mutableStateOf("1950") }
     var errorText by remember { mutableStateOf<String?>(null) }
     val animatedProgress by animateFloatAsState(
         targetValue = progress,
@@ -296,7 +312,7 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "Для оффлайн работы необходимо установить локальную модель",
+            text = "Для оффлайн распознавания фото и картинок скачивается полный пакет (~1.95 ГБ)",
             fontSize = 14.sp,
             color = Color(0xFF757575),
             textAlign = TextAlign.Center
@@ -305,6 +321,15 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
         Spacer(modifier = Modifier.height(32.dp))
 
         if (isDownloading) {
+            Text(
+                text = currentStepName,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = Color(0xFF1E2124)
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
             LinearProgressIndicator(
                 progress = { animatedProgress },
                 modifier = Modifier
@@ -329,23 +354,49 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
                     isDownloading = true
                     errorText = null
                     scope.launch {
-                        downloadDirectModel(
+                        // 1. Скачиваем текстовое ядро (~1.2 ГБ)
+                        currentStepName = "1/2 Загрузка языкового ядра Qwen2 (~1.2 ГБ)..."
+                        var part1Downloaded = 0L
+                        val part1TotalEst = 1250L * 1024 * 1024
+
+                        val success1 = downloadFileSafely(
                             urlStr = "https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/Qwen2-VL-2B-Instruct-Q4_K_M.gguf?download=true",
-                            dest = modelFile,
-                            onProgress = { cur, total ->
-                                progress = if (total > 0) cur.toFloat() / total.toFloat() else 0f
+                            dest = textModel,
+                            onProgress = { cur, _ ->
+                                part1Downloaded = cur
+                                val totalCombined = part1TotalEst + (710L * 1024 * 1024)
+                                progress = cur.toFloat() / totalCombined.toFloat()
                                 downloadedMb = (cur / (1024 * 1024)).toString()
-                                totalMb = (total / (1024 * 1024)).toString()
-                            },
-                            onDone = {
-                                isDownloading = false
-                                onComplete()
                             },
                             onError = { err ->
                                 isDownloading = false
                                 errorText = err
                             }
                         )
+
+                        if (!success1) return@launch
+
+                        // 2. Скачиваем проектор для картинок (~710 МБ)
+                        currentStepName = "2/2 Загрузка модуля зрения для фото (~710 МБ)..."
+                        val success2 = downloadFileSafely(
+                            urlStr = "https://huggingface.co/ggml-org/Qwen2-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen2-VL-2B-Instruct-Q8_0.gguf?download=true",
+                            dest = visionProj,
+                            onProgress = { cur, _ ->
+                                val combined = part1Downloaded + cur
+                                val totalCombined = part1TotalEst + (710L * 1024 * 1024)
+                                progress = (combined.toFloat() / totalCombined.toFloat()).coerceAtMost(1f)
+                                downloadedMb = (combined / (1024 * 1024)).toString()
+                            },
+                            onError = { err ->
+                                isDownloading = false
+                                errorText = err
+                            }
+                        )
+
+                        if (success2) {
+                            isDownloading = false
+                            onComplete()
+                        }
                     }
                 },
                 modifier = Modifier
@@ -354,7 +405,7 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3D5AFE))
             ) {
-                Text("Скачать оффлайн-модуль", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text("Скачать оффлайн-модуль (~2 ГБ)", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
             }
 
             if (errorText != null) {
@@ -370,6 +421,9 @@ fun DownloadModelScreen(modelFile: File, onComplete: () -> Unit) {
     }
 }
 
+// -------------------------------------------------------------------------------------
+// ОСНОВНОЙ ЭКРАН РЕШЕБНИКА
+// -------------------------------------------------------------------------------------
 @Composable
 fun TaskSolverScreen() {
     val context = LocalContext.current
@@ -380,7 +434,6 @@ fun TaskSolverScreen() {
     var solutionText by remember { mutableStateOf("") }
     var rawRecognizedText by remember { mutableStateOf("") }
 
-    // Безопасный выбор фото без вылетов и сжатие
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -390,7 +443,6 @@ fun TaskSolverScreen() {
                 val originalBitmap = BitmapFactory.decodeStream(inputStream)
                 inputStream?.close()
                 if (originalBitmap != null) {
-                    // Масштабируем фото, чтобы не переполнять память Android
                     capturedImage = scaleDownBitmap(originalBitmap, 1280)
                     solutionText = ""
                     rawRecognizedText = ""
@@ -416,7 +468,7 @@ fun TaskSolverScreen() {
     if (showPickerChoice) {
         AlertDialog(
             onDismissRequest = { showPickerChoice = false },
-            title = { Text("Прикрепить фото задачи") },
+            title = { Text("Прикрепить фото задания") },
             text = { Text("Выберите удобный способ добавления снимка") },
             confirmButton = {
                 TextButton(onClick = {
@@ -666,7 +718,6 @@ fun TaskSolverScreen() {
     }
 }
 
-// Защита памяти: уменьшение размера больших картинок с камеры
 fun scaleDownBitmap(realImage: Bitmap, maxImageSize: Int): Bitmap {
     val ratio = Math.min(
         maxImageSize.toFloat() / realImage.width,
@@ -850,13 +901,13 @@ fun Modifier.drawDottedBorder(color: Color, strokeWidth: Dp, cornerRadius: Dp) =
     }
 )
 
-suspend fun downloadDirectModel(
+// Скачивание файлов с обходом защиты редиректов
+suspend fun downloadFileSafely(
     urlStr: String,
     dest: File,
     onProgress: (Long, Long) -> Unit,
-    onDone: () -> Unit,
     onError: (String) -> Unit
-) = withContext(Dispatchers.IO) {
+): Boolean = withContext(Dispatchers.IO) {
     try {
         var currentUrl = urlStr
         var connection: HttpURLConnection
@@ -877,19 +928,19 @@ suspend fun downloadDirectModel(
 
             val status = connection.responseCode
             if (status in listOf(HttpURLConnection.HTTP_MOVED_PERM, HttpURLConnection.HTTP_MOVED_TEMP, 307, 308, 303)) {
-                val newUrl = connection.getHeaderField("Location") ?: break
+                val newUrl = connection.getHeaderField("Location") ?: return@withContext false
                 connection.disconnect()
                 currentUrl = newUrl
                 redirectCount++
                 if (redirectCount > 10) {
                     withContext(Dispatchers.Main) { onError("Превышен лимит перенаправлений") }
-                    return@withContext
+                    return@withContext false
                 }
             } else if (status in 200..299) {
                 break
             } else {
                 withContext(Dispatchers.Main) { onError("Ошибка сервера: $status") }
-                return@withContext
+                return@withContext false
             }
         }
 
@@ -910,8 +961,9 @@ suspend fun downloadDirectModel(
                 output.flush()
             }
         }
-        withContext(Dispatchers.Main) { onDone() }
+        true
     } catch (e: Exception) {
-        withContext(Dispatchers.Main) { onError(e.message ?: "Сбой сети") }
+        withContext(Dispatchers.Main) { onError(e.message ?: "Сбой соединения") }
+        false
     }
 }
