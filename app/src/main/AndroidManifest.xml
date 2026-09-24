@@ -7,7 +7,7 @@
     <application
         android:allowBackup="true"
         android:icon="@drawable/logo"
-        android:label="Reshala AI"
+        android:label="Решебник Заданий"
         android:roundIcon="@drawable/logo"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
