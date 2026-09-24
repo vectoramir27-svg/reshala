@@ -47,7 +47,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("io.coil-kt:coil-compose:2.6.0")
 
-    // Мультиязычный OCR с поддержкой кириллицы и латиницы
+    // Мультиязычный модуль распознавания (поддерживает русский алфавит, формулы и латиницу)
     implementation("com.google.mlkit:text-recognition:16.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }
