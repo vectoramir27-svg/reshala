@@ -13,6 +13,10 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+
+        ndk {
+            abiFilters.addAll(listOf("arm64-v8a"))
+        }
     }
 
     buildTypes {
@@ -47,7 +51,9 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("io.coil-kt:coil-compose:2.6.0")
 
-    // Мультиязычный модуль распознавания (поддерживает русский алфавит, формулы и латиницу)
+    // ML Kit для быстрого считывания текста и формул с фото
     implementation("com.google.mlkit:text-recognition:16.0.0")
+
+    // Корутины для фонового инференса
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }
